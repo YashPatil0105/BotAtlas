@@ -1,0 +1,501 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── ENUMS ──────────────────────────────────────────
+
+enum Role {
+  ADMIN
+  REVIEWER
+  VIEWER
+}
+
+enum BotStatus {
+  UNKNOWN
+  ACTIVE
+  FAILED
+  INACTIVE
+  OBSOLETE
+  RETIRED
+}
+
+enum ReviewStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+  AWAITING_VALIDATION
+}
+
+enum Criticality {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum Technology {
+  PAD
+  POWER_AUTOMATE_CLOUD
+  UI_PATH
+  BLUE_PRISM
+  AUTOMATION_ANYWHERE
+  OTHER
+}
+
+enum BotEnvironment {
+  DEFAULT
+  DEV
+  UAT
+  PROD
+  UNKNOWN
+}
+
+enum FinalRecommendation {
+  RESTORE
+  REFACTOR
+  REBUILD
+  REPLACE
+  RETIRE
+  HOLD
+}
+
+enum ActionType {
+  PORTAL_LOGIN
+  BROWSER_NAVIGATION
+  FILE_DOWNLOAD
+  FILE_UPLOAD
+  SFTP_UPLOAD
+  SFTP_DOWNLOAD
+  FILE_VALIDATION
+  FILE_ARCHIVE
+  EXCEL_READ
+  EXCEL_WRITE
+  DATABASE_QUERY
+  API_CALL
+  EMAIL_SEND
+  TEAMS_NOTIFICATION
+  APPROVAL
+  DATA_TRANSFORMATION
+  SCREENSHOT_CAPTURE
+  ERROR_LOGGING
+  RETRY
+  OTHER
+}
+
+enum ComponentStatus {
+  CANDIDATE
+  APPROVED
+  NEEDS_REFACTOR
+  DEPRECATED
+}
+
+enum MatchType {
+  EXACT
+  PARTIAL
+  STRUCTURAL
+  FUZZY
+  SEMANTIC
+  MANUAL
+}
+
+enum ReviewerDecision {
+  REUSED
+  PARTIALLY_REUSED
+  REJECTED
+  CANDIDATE_CREATED
+}
+
+enum DependencyType {
+  PORTAL
+  APPLICATION
+  SFTP
+  API
+  DATABASE
+  VM
+  FOLDER
+  BROWSER
+  CREDENTIAL
+  NETWORK
+  VPN
+  SCHEDULER
+  OTHER
+}
+
+enum FindingCategory {
+  BUSINESS_LOGIC
+  ARCHITECTURE
+  PERFORMANCE
+  MAINTAINABILITY
+  ERROR_HANDLING
+  SECURITY
+  GOVERNANCE
+  DOCUMENTATION
+  DEPENDENCY
+  DATA
+  SCHEDULING
+}
+
+enum FindingStatus {
+  OPEN
+  IN_PROGRESS
+  BLOCKED
+  CLOSED
+}
+
+enum RootCauseCategory {
+  CREDENTIAL_ISSUE
+  UI_CHANGE
+  SELECTOR_ISSUE
+  HARDCODED_PATH
+  MACHINE_ISSUE
+  BROWSER_ISSUE
+  NETWORK_VPN_ISSUE
+  SFTP_API_ISSUE
+  FILE_DATA_FORMAT_ISSUE
+  SCHEDULING_ISSUE
+  LOGIC_DEFECT
+  PERMISSION_ISSUE
+  PROCESS_OBSOLETE
+  UNKNOWN
+}
+
+enum EvidenceType {
+  SCREENSHOT
+  PAD_EXPORT
+  BRD
+  ERROR_LOG
+  RUNBOOK
+  TEST_EVIDENCE
+  OTHER
+}
+
+enum ChecklistValue {
+  YES
+  NO
+  NOT_VERIFIED
+  NA
+}
+
+enum TaskStatus {
+  OPEN
+  IN_PROGRESS
+  BLOCKED
+  CLOSED
+}
+
+// ─── MODELS ─────────────────────────────────────────
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  role         Role     @default(VIEWER)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@map("users")
+}
+
+model Bot {
+  id                  String               @id @default(cuid())
+  botCode             String               @unique
+  name                String
+  businessPurpose     String?
+  businessProcess     String?
+  department          String?
+  businessOwner       String?
+  technicalOwner      String?
+  vendor              String?
+  technology          Technology           @default(PAD)
+  environment         BotEnvironment       @default(UNKNOWN)
+  currentStatus       BotStatus            @default(UNKNOWN)
+  reviewStatus        ReviewStatus         @default(NOT_STARTED)
+  criticality         Criticality          @default(MEDIUM)
+  lastKnownRunAt      DateTime?
+  scheduleOrTrigger   String?
+  finalRecommendation FinalRecommendation?
+  reviewSummary       String?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  createdBy           String?
+  updatedBy           String?
+
+  steps              BotStep[]
+  dependencies       Dependency[]
+  findings           Finding[]
+  rootCauseAssessments RootCauseAssessment[]
+  remediationTasks   RemediationTask[]
+  evidences          Evidence[]
+  checklist          BotChecklist[]
+  sourceSimilarities BotSimilarity[]      @relation("SourceBot")
+  targetSimilarities BotSimilarity[]      @relation("TargetBot")
+  sourceComponents   Component[]
+
+  @@index([botCode])
+  @@index([currentStatus])
+  @@index([reviewStatus])
+  @@index([criticality])
+  @@index([vendor])
+  @@index([department])
+  @@index([technology])
+  @@map("bots")
+}
+
+model BotStep {
+  id                 String      @id @default(cuid())
+  botId              String
+  stepOrder          Int
+  moduleName         String?
+  actionType         ActionType  @default(OTHER)
+  systemName         String?
+  systemType         String?
+  inputType          String?
+  outputType         String?
+  validationType     String?
+  retryStrategy      String?
+  description        String
+  normalizedText     String?
+  canonicalSignature String?
+  exactHash          String?
+  tags               String[]
+  reusableCandidate  Boolean     @default(false)
+  notes              String?
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+
+  bot                Bot         @relation(fields: [botId], references: [id], onDelete: Cascade)
+  componentMaps      StepComponentMap[]
+
+  @@index([botId])
+  @@index([actionType])
+  @@index([canonicalSignature])
+  @@index([exactHash])
+  @@index([systemName])
+  @@map("bot_steps")
+}
+
+model Component {
+  id                 String          @id @default(cuid())
+  componentCode      String          @unique
+  name               String
+  componentType      String
+  description        String?
+  canonicalSignature String?
+  sourceBotId        String?
+  sourceLocation     String?
+  owner              String?
+  version            String          @default("1.0")
+  status             ComponentStatus @default(CANDIDATE)
+  securityReviewed   Boolean         @default(false)
+  usageCount         Int             @default(0)
+  tags               String[]
+  knownLimitations   String?
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  sourceBot          Bot?            @relation(fields: [sourceBotId], references: [id])
+  stepMaps           StepComponentMap[]
+
+  @@index([componentCode])
+  @@index([canonicalSignature])
+  @@map("components")
+}
+
+model StepComponentMap {
+  id               String           @id @default(cuid())
+  stepId           String
+  componentId      String
+  confidenceScore  Float            @default(0)
+  matchType        MatchType        @default(MANUAL)
+  reviewerDecision ReviewerDecision?
+  notes            String?
+  createdAt        DateTime         @default(now())
+
+  step             BotStep          @relation(fields: [stepId], references: [id], onDelete: Cascade)
+  component        Component        @relation(fields: [componentId], references: [id], onDelete: Cascade)
+
+  @@map("step_component_maps")
+}
+
+model Dependency {
+  id              String         @id @default(cuid())
+  botId           String
+  dependencyType  DependencyType @default(OTHER)
+  name            String
+  ownerTeam       String?
+  criticality     Criticality    @default(MEDIUM)
+  accessConfirmed Boolean        @default(false)
+  notes           String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  bot             Bot            @relation(fields: [botId], references: [id], onDelete: Cascade)
+
+  @@index([botId])
+  @@index([dependencyType])
+  @@map("dependencies")
+}
+
+model Finding {
+  id              String          @id @default(cuid())
+  botId           String
+  category        FindingCategory
+  observation     String
+  evidence        String?
+  impact          String?
+  recommendation  String?
+  priority        Criticality     @default(MEDIUM)
+  status          FindingStatus   @default(OPEN)
+  owner           String?
+  dueDate         DateTime?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  bot             Bot             @relation(fields: [botId], references: [id], onDelete: Cascade)
+  remediationTasks RemediationTask[]
+  evidenceFiles   Evidence[]
+
+  @@index([botId])
+  @@index([category])
+  @@index([status])
+  @@index([priority])
+  @@map("findings")
+}
+
+model RootCauseAssessment {
+  id                 String            @id @default(cuid())
+  botId              String
+  failurePoint       String
+  category           RootCauseCategory @default(UNKNOWN)
+  probableCause      String?
+  evidence           String?
+  confirmed          Boolean           @default(false)
+  validationRequired Boolean           @default(true)
+  recoveryAction     String?
+  status             FindingStatus     @default(OPEN)
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  bot                Bot               @relation(fields: [botId], references: [id], onDelete: Cascade)
+
+  @@index([botId])
+  @@index([category])
+  @@map("root_cause_assessments")
+}
+
+model RemediationTask {
+  id              String      @id @default(cuid())
+  botId           String
+  findingId       String?
+  title           String
+  description     String?
+  priority        Criticality @default(MEDIUM)
+  owner           String?
+  status          TaskStatus  @default(OPEN)
+  targetDate      DateTime?
+  closureEvidence String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  bot             Bot         @relation(fields: [botId], references: [id], onDelete: Cascade)
+  finding         Finding?    @relation(fields: [findingId], references: [id])
+
+  @@index([botId])
+  @@index([status])
+  @@map("remediation_tasks")
+}
+
+model Evidence {
+  id                 String       @id @default(cuid())
+  botId              String
+  findingId          String?
+  fileName           String
+  filePath           String
+  evidenceType       EvidenceType @default(OTHER)
+  uploadedAt         DateTime     @default(now())
+  uploadedBy         String?
+  classificationNote String?
+
+  bot                Bot          @relation(fields: [botId], references: [id], onDelete: Cascade)
+  finding            Finding?     @relation(fields: [findingId], references: [id])
+
+  @@index([botId])
+  @@map("evidences")
+}
+
+model FailurePattern {
+  id                String   @id @default(cuid())
+  name              String
+  category          RootCauseCategory
+  symptoms          String
+  likelyCause       String
+  recommendedFix    String
+  affectedBotsCount Int      @default(0)
+  tags              String[]
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@map("failure_patterns")
+}
+
+model BotSimilarity {
+  id               String  @id @default(cuid())
+  sourceBotId      String
+  targetBotId      String
+  exactScore       Float   @default(0)
+  canonicalScore   Float   @default(0)
+  sequenceScore    Float   @default(0)
+  fuzzyScore       Float   @default(0)
+  semanticScore    Float?
+  finalScore       Float   @default(0)
+  matchExplanation String?
+  reviewerDecision String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  sourceBot        Bot     @relation("SourceBot", fields: [sourceBotId], references: [id], onDelete: Cascade)
+  targetBot        Bot     @relation("TargetBot", fields: [targetBotId], references: [id], onDelete: Cascade)
+
+  @@unique([sourceBotId, targetBotId])
+  @@map("bot_similarities")
+}
+
+model BotChecklist {
+  id            String         @id @default(cuid())
+  botId         String
+  checklistItem String
+  value         ChecklistValue @default(NOT_VERIFIED)
+  notes         String?
+  verifiedBy    String?
+  verifiedAt    DateTime?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  bot           Bot            @relation(fields: [botId], references: [id], onDelete: Cascade)
+
+  @@unique([botId, checklistItem])
+  @@index([botId])
+  @@map("bot_checklists")
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  entityType String
+  entityId   String
+  action     String
+  field      String?
+  oldValue   String?
+  newValue   String?
+  userId     String?
+  timestamp  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([timestamp])
+  @@map("audit_logs")
+}
