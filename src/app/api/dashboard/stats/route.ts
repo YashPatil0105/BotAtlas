@@ -2,14 +2,26 @@ import { NextResponse } from "next/server";
 import prisma from "@/lib/db";
 import { getSessionUser, getAssignedBotIds } from "@/lib/getSessionUser";
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const user = await getSessionUser();
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const assignedBotIds = await getAssignedBotIds(user);
+    const { searchParams } = new URL(request.url);
+    const scope = searchParams.get("scope");
+
+    let assignedBotIds: string[] | null = null;
+    if (scope === "my") {
+      const assignments = await prisma.botAssignment.findMany({
+        where: { userId: user.id },
+        select: { botId: true },
+      });
+      assignedBotIds = assignments.map((a) => a.botId);
+    } else {
+      assignedBotIds = await getAssignedBotIds(user);
+    }
 
     // Build a where clause for bot-level queries
     const botWhere: any = assignedBotIds !== null ? { id: { in: assignedBotIds } } : {};

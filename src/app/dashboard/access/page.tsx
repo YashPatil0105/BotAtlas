@@ -1,9 +1,20 @@
 'use client';
 
-import { useState, useMemo, useRef } from 'react';
-import { Search, Download, Filter, UserCheck, Shield, Laptop, Building2, Upload, FileSpreadsheet, Plus, MoreHorizontal, UserPlus } from 'lucide-react';
+import { useState, useMemo, useRef, useEffect } from 'react';
+import { Search, Download, Filter, UserCheck, Shield, Laptop, Building2, Upload, FileSpreadsheet, Plus, MoreHorizontal, UserPlus, Trash2, Edit2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import * as XLSX from 'xlsx';
+import { useSession } from 'next-auth/react';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 // Initial Mock data
 const INITIAL_DATA = [
@@ -33,9 +44,33 @@ const INITIAL_DATA = [
 ];
 
 export default function AccessManagementPage() {
+  const { data: session } = useSession();
+  const isAdmin = session?.user && (session.user as any).role === 'ADMIN';
+
   const [data, setData] = useState(INITIAL_DATA);
+  
+  // Determine user's company if they are not admin
+  const userCompany = useMemo(() => {
+    if (isAdmin || !session?.user?.name) return null;
+    const userRow = data.find(d => d.name.toLowerCase() === session.user.name?.toLowerCase());
+    return userRow ? (userRow.type === 'Unity Staff' ? 'Unity Staff' : userRow.vendor) : null;
+  }, [session, data, isAdmin]);
+
+  const allowedData = useMemo(() => {
+    if (isAdmin) return data;
+    if (!userCompany) return [];
+    return data.filter(d => userCompany === 'Unity Staff' ? d.type === 'Unity Staff' : d.vendor === userCompany);
+  }, [data, isAdmin, userCompany]);
+
   const [search, setSearch] = useState('');
   const [activeTab, setActiveTab] = useState('All');
+  
+  useEffect(() => {
+    if (!isAdmin && userCompany) {
+      setActiveTab(userCompany);
+    }
+  }, [isAdmin, userCompany]);
+
   const [showFilter, setShowFilter] = useState(false);
   
   const [filters, setFilters] = useState({
@@ -45,6 +80,9 @@ export default function AccessManagementPage() {
   });
 
   const [showAddModal, setShowAddModal] = useState(false);
+  const [editForm, setEditForm] = useState<any>(null);
+  const [deleteConfirmUser, setDeleteConfirmUser] = useState<number | null>(null);
+
   const createEmptyUser = () => ({
     name: '', id: '', dept: 'BPR&HA', type: 'Unity Staff', vendor: 'NA', newVendor: '', laptopModel: '', assetId: '', pam: 'No', finnacle: 'No', approvedBy: '', status: '', remarks: '', software: ''
   });
@@ -66,19 +104,44 @@ export default function AccessManagementPage() {
     setNewEntries([createEmptyUser()]);
   };
 
+  const handleSaveEdit = () => {
+    const updatedEntry = {
+      ...editForm,
+      vendor: editForm.type === 'Unity Staff' ? 'NA' : (editForm.vendor === 'NEW' ? editForm.newVendor : editForm.vendor)
+    };
+    delete (updatedEntry as any).newVendor;
+
+    setData(data.map(d => d.sr === updatedEntry.sr ? updatedEntry : d));
+    setEditForm(null);
+  };
+
+  const handleDelete = (sr: number) => {
+    setDeleteConfirmUser(sr);
+  };
+
+  const confirmDelete = () => {
+    if (deleteConfirmUser !== null) {
+      setData(data.filter(d => d.sr !== deleteConfirmUser));
+      setDeleteConfirmUser(null);
+    }
+  };
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Derive vendor tabs dynamically from data
+  // Derive vendor tabs dynamically from allowed data
   const vendorTabs = useMemo(() => {
-    const vendors = new Set(data.map(d => d.vendor).filter(v => v !== 'NA' && v.trim() !== ''));
+    if (!isAdmin && userCompany) return [userCompany];
+    const vendors = new Set(allowedData.map(d => d.vendor).filter(v => v !== 'NA' && v.trim() !== ''));
     return ['All', 'Unity Staff', ...Array.from(vendors)];
-  }, [data]);
+  }, [allowedData, isAdmin, userCompany]);
 
   const filteredData = useMemo(() => {
-    return data.filter((user) => {
+    return allowedData.filter((user) => {
       // 1. Tab Filter
-      if (activeTab === 'Unity Staff' && user.type !== 'Unity Staff') return false;
-      if (activeTab !== 'All' && activeTab !== 'Unity Staff' && user.vendor !== activeTab) return false;
+      if (isAdmin) {
+        if (activeTab === 'Unity Staff' && user.type !== 'Unity Staff') return false;
+        if (activeTab !== 'All' && activeTab !== 'Unity Staff' && user.vendor !== activeTab) return false;
+      }
 
       // 2. Search Filter
       if (search && !(
@@ -185,41 +248,43 @@ export default function AccessManagementPage() {
           </p>
         </div>
         
-        <div className="flex items-center gap-3">
-          <input 
-            type="file" 
-            accept=".xlsx,.xls" 
-            ref={fileInputRef} 
-            onChange={handleImport} 
-            className="hidden" 
-          />
-          <button 
-            onClick={() => fileInputRef.current?.click()}
-            className="flex items-center gap-2 px-4 py-2 bg-secondary text-secondary-foreground rounded-lg text-sm font-medium hover:bg-secondary/80 transition-colors shadow-sm"
-          >
-            <Upload className="w-4 h-4" /> Import Data
-          </button>
-          <button 
-            onClick={() => setShowAddModal(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-primary/10 text-primary rounded-lg text-sm font-medium hover:bg-primary/20 transition-colors shadow-sm"
-          >
-            <UserPlus className="w-4 h-4" /> Add Users
-          </button>
-          <button 
-            onClick={handleExport}
-            className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 transition-colors shadow-sm shadow-primary/20"
-          >
-            <Download className="w-4 h-4" /> Export Excel
-          </button>
-        </div>
+        {isAdmin && (
+          <div className="flex items-center gap-3">
+            <input 
+              type="file" 
+              accept=".xlsx,.xls" 
+              ref={fileInputRef} 
+              onChange={handleImport} 
+              className="hidden" 
+            />
+            <button 
+              onClick={() => fileInputRef.current?.click()}
+              className="flex items-center gap-2 px-4 py-2 bg-secondary text-secondary-foreground rounded-lg text-sm font-medium hover:bg-secondary/80 transition-colors shadow-sm"
+            >
+              <Upload className="w-4 h-4" /> Import Data
+            </button>
+            <button 
+              onClick={() => setShowAddModal(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-primary/10 text-primary rounded-lg text-sm font-medium hover:bg-primary/20 transition-colors shadow-sm"
+            >
+              <UserPlus className="w-4 h-4" /> Add Users
+            </button>
+            <button 
+              onClick={handleExport}
+              className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 transition-colors shadow-sm shadow-primary/20"
+            >
+              <Download className="w-4 h-4" /> Export Excel
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         {[
-          { label: 'Total Users', value: data.length, icon: UserCheck, color: 'text-blue-500', bg: 'bg-blue-500/10', border: 'border-blue-500/20' },
-          { label: 'PAM Access', value: data.filter(d => d.pam.toLowerCase() === 'yes').length, icon: Shield, color: 'text-emerald-500', bg: 'bg-emerald-500/10', border: 'border-emerald-500/20' },
-          { label: 'Unity Staff', value: data.filter(d => d.type === 'Unity Staff').length, icon: Building2, color: 'text-orange-500', bg: 'bg-orange-500/10', border: 'border-orange-500/20' },
-          { label: 'Laptops Issued', value: data.filter(d => d.laptopModel && d.laptopModel !== 'N/A').length, icon: Laptop, color: 'text-purple-500', bg: 'bg-purple-500/10', border: 'border-purple-500/20' },
+          { label: 'Total Users', value: allowedData.length, icon: UserCheck, color: 'text-blue-500', bg: 'bg-blue-500/10', border: 'border-blue-500/20' },
+          { label: 'PAM Access', value: allowedData.filter(d => d.pam.toLowerCase() === 'yes').length, icon: Shield, color: 'text-emerald-500', bg: 'bg-emerald-500/10', border: 'border-emerald-500/20' },
+          { label: 'Unity Staff', value: allowedData.filter(d => d.type === 'Unity Staff').length, icon: Building2, color: 'text-orange-500', bg: 'bg-orange-500/10', border: 'border-orange-500/20' },
+          { label: 'Laptops Issued', value: allowedData.filter(d => d.laptopModel && d.laptopModel !== 'N/A').length, icon: Laptop, color: 'text-purple-500', bg: 'bg-purple-500/10', border: 'border-purple-500/20' },
         ].map((stat, i) => (
           <div key={i} className="bg-card border border-border/50 rounded-xl p-5 flex items-center gap-4 shadow-sm hover:shadow-md transition-shadow">
             <div className={cn("w-12 h-12 rounded-xl flex items-center justify-center border", stat.bg, stat.border)}>
@@ -335,6 +400,7 @@ export default function AccessManagementPage() {
                 <th className="px-5 py-4 font-semibold">Hardware</th>
                 <th className="px-5 py-4 font-semibold text-center">PAM</th>
                 <th className="px-5 py-4 font-semibold text-center">Finnacle</th>
+                {isAdmin && <th className="px-5 py-4 font-semibold text-right">Actions</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-border/30">
@@ -392,11 +458,23 @@ export default function AccessManagementPage() {
                         {row.finnacle.toUpperCase()}
                       </span>
                     </td>
+                    {isAdmin && (
+                      <td className="px-5 py-3 text-right">
+                        <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button onClick={() => setEditForm({ ...row })} className="p-1.5 text-muted-foreground hover:text-blue-500 hover:bg-blue-500/10 rounded-md transition-colors" title="Edit">
+                            <Edit2 className="w-4 h-4" />
+                          </button>
+                          <button onClick={() => handleDelete(row.sr)} className="p-1.5 text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 rounded-md transition-colors" title="Delete">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan={7} className="px-5 py-12 text-center text-muted-foreground">
+                  <td colSpan={isAdmin ? 8 : 7} className="px-5 py-12 text-center text-muted-foreground">
                     <div className="flex flex-col items-center justify-center gap-2">
                       <FileSpreadsheet className="w-8 h-8 text-muted-foreground/50" />
                       <p>No users found matching your filters.</p>
@@ -411,7 +489,7 @@ export default function AccessManagementPage() {
           </table>
         </div>
         <div className="p-4 border-t border-border/50 text-xs text-muted-foreground flex justify-between items-center bg-muted/10">
-          <span>Showing <strong className="text-foreground">{filteredData.length}</strong> of <strong className="text-foreground">{data.length}</strong> entries</span>
+          <span>Showing <strong className="text-foreground">{filteredData.length}</strong> of <strong className="text-foreground">{allowedData.length}</strong> entries</span>
         </div>
       </div>
 
@@ -532,6 +610,120 @@ export default function AccessManagementPage() {
           </div>
         </div>
       )}
+
+      {/* Edit User Modal */}
+      {editForm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-card border border-border/50 rounded-2xl w-full max-w-3xl shadow-2xl flex flex-col max-h-[90vh] animate-fade-in">
+            <div className="p-6 border-b border-border/50 flex items-center justify-between bg-muted/20 rounded-t-2xl">
+              <div>
+                <h2 className="text-xl font-bold flex items-center gap-2">
+                  <Edit2 className="w-5 h-5 text-blue-500" />
+                  Edit Entry
+                </h2>
+              </div>
+              <button onClick={() => setEditForm(null)} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-muted text-muted-foreground transition-colors">✕</button>
+            </div>
+            
+            <div className="p-6 overflow-y-auto space-y-6 flex-1 bg-muted/5">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="md:col-span-2">
+                  <label className="text-xs text-muted-foreground mb-1 block">Employee Name</label>
+                  <input type="text" value={editForm.name} onChange={e => setEditForm({...editForm, name: e.target.value})} className="w-full text-sm bg-background border border-border/50 rounded-lg px-3 py-2 focus:ring-2 focus:ring-primary/50 outline-none" />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="text-xs text-muted-foreground mb-1 block">Employee ID</label>
+                  <input type="text" value={editForm.id} onChange={e => setEditForm({...editForm, id: e.target.value})} className="w-full text-sm bg-background border border-border/50 rounded-lg px-3 py-2 focus:ring-2 focus:ring-primary/50 outline-none" />
+                </div>
+                
+                <div>
+                  <label className="text-xs text-muted-foreground mb-1 block">User Type</label>
+                  <select value={editForm.type} onChange={e => { const type = e.target.value; setEditForm({...editForm, type, vendor: type === 'Unity Staff' ? 'NA' : editForm.vendor})}} className="w-full text-sm bg-background border border-border/50 rounded-lg px-3 py-2 focus:ring-2 focus:ring-primary/50 outline-none">
+                    <option value="Unity Staff">Unity Staff</option>
+                    <option value="Vendor">Vendor</option>
+                  </select>
+                </div>
+                
+                {editForm.type === 'Vendor' ? (
+                  <>
+                    <div>
+                      <label className="text-xs text-muted-foreground mb-1 block">Vendor Company</label>
+                      <select value={editForm.vendor} onChange={e => setEditForm({...editForm, vendor: e.target.value})} className="w-full text-sm bg-background border border-border/50 rounded-lg px-3 py-2 focus:ring-2 focus:ring-primary/50 outline-none">
+                        <option value="NA">Select Vendor...</option>
+                        {Array.from(new Set(data.map(d=>d.vendor).filter(v=>v!=='NA'&&v!==''))).map(v => (
+                          <option key={v} value={v}>{v}</option>
+                        ))}
+                        <option value="NEW">+ Add New Vendor</option>
+                      </select>
+                    </div>
+                    {editForm.vendor === 'NEW' && (
+                      <div className="md:col-span-2">
+                        <label className="text-xs text-muted-foreground mb-1 block text-blue-500">New Vendor Name</label>
+                        <input type="text" value={editForm.newVendor || ''} onChange={e => setEditForm({...editForm, newVendor: e.target.value})} className="w-full text-sm bg-blue-500/5 border border-blue-500/30 rounded-lg px-3 py-2 focus:ring-2 focus:ring-primary/50 outline-none" placeholder="e.g. IBM, Cognizant" />
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="md:col-span-2" />
+                )}
+                
+                <div>
+                  <label className="text-xs text-muted-foreground mb-1 block">Department</label>
+                  <input type="text" value={editForm.dept} onChange={e => setEditForm({...editForm, dept: e.target.value})} className="w-full text-sm bg-background border border-border/50 rounded-lg px-3 py-2 focus:ring-2 focus:ring-primary/50 outline-none" />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground mb-1 block">Laptop Model</label>
+                  <input type="text" value={editForm.laptopModel} onChange={e => setEditForm({...editForm, laptopModel: e.target.value})} className="w-full text-sm bg-background border border-border/50 rounded-lg px-3 py-2 focus:ring-2 focus:ring-primary/50 outline-none" />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="text-xs text-muted-foreground mb-1 block">Asset ID</label>
+                  <input type="text" value={editForm.assetId} onChange={e => setEditForm({...editForm, assetId: e.target.value})} className="w-full text-sm bg-background border border-border/50 rounded-lg px-3 py-2 focus:ring-2 focus:ring-primary/50 outline-none" />
+                </div>
+                
+                <div>
+                  <label className="text-xs text-muted-foreground mb-1 block">PAM Access</label>
+                  <select value={editForm.pam} onChange={e => setEditForm({...editForm, pam: e.target.value})} className="w-full text-sm bg-background border border-border/50 rounded-lg px-3 py-2 focus:ring-2 focus:ring-primary/50 outline-none">
+                    <option value="Yes">Yes</option>
+                    <option value="No">No</option>
+                    <option value="UAT PAM">UAT PAM</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground mb-1 block">Finnacle Access</label>
+                  <select value={editForm.finnacle} onChange={e => setEditForm({...editForm, finnacle: e.target.value})} className="w-full text-sm bg-background border border-border/50 rounded-lg px-3 py-2 focus:ring-2 focus:ring-primary/50 outline-none">
+                    <option value="Yes">Yes</option>
+                    <option value="No">No</option>
+                    <option value="Only UAT Access">Only UAT Access</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+            
+            <div className="p-5 border-t border-border/50 flex justify-end gap-3 bg-muted/20 rounded-b-2xl">
+              <button onClick={() => setEditForm(null)} className="px-6 py-2.5 rounded-lg text-sm font-medium border border-border/50 hover:bg-muted transition-colors bg-background">Cancel</button>
+              <button onClick={handleSaveEdit} className="px-6 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors shadow-lg shadow-blue-500/20">
+                Save Changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      <AlertDialog open={deleteConfirmUser !== null} onOpenChange={(open) => !open && setDeleteConfirmUser(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. This will permanently delete the user's data from our servers.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDelete} className="bg-red-500 hover:bg-red-600">Delete</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
     </div>
   );

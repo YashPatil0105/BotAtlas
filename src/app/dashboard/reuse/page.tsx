@@ -5,7 +5,7 @@ import Link from 'next/link';
 import {
   Search, Bot as BotIcon, GitBranch, Component as ComponentIcon,
   AlertTriangle, ArrowRight, Zap, Layers, BarChart3,
-  ChevronDown, ChevronUp, Sparkles, Target, RefreshCw
+  ChevronDown, ChevronUp, Sparkles, Target, RefreshCw, GitCompare
 } from 'lucide-react';
 
 // ─── Types ──────────────────────────────────────────
@@ -416,14 +416,22 @@ export default function ReuseExplorerPage() {
 
       {/* ── Bot Similarity Analyzer ───────────────────── */}
       <div className="space-y-4">
-        <div className="flex items-center gap-3">
-          <div className="p-2 rounded-xl bg-indigo-500/10 border border-indigo-500/20">
-            <Target className="h-5 w-5 text-indigo-400" />
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-xl bg-indigo-500/10 border border-indigo-500/20">
+              <Target className="h-5 w-5 text-indigo-400" />
+            </div>
+            <div>
+              <h3 className="text-lg font-semibold text-foreground">Bot Similarity Analyzer</h3>
+              <p className="text-xs text-muted-foreground">Select a bot to find similar automation workflows across your registry</p>
+            </div>
           </div>
-          <div>
-            <h3 className="text-lg font-semibold text-foreground">Bot Similarity Analyzer</h3>
-            <p className="text-xs text-muted-foreground">Select a bot to find similar automation workflows across your registry</p>
-          </div>
+          <Link
+            href="/dashboard/reuse/compare"
+            className="flex items-center gap-1.5 px-4 py-2 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 rounded-xl text-xs font-semibold transition-all hover:scale-[1.02] shadow-sm shadow-indigo-500/5 active:scale-98"
+          >
+            <GitCompare className="h-3.5 w-3.5" /> Side-by-Side Comparison
+          </Link>
         </div>
 
         {/* Bot Selector + Analyze Button */}
@@ -525,7 +533,14 @@ export default function ReuseExplorerPage() {
                         </div>
 
                         {/* Actions */}
-                        <div className="flex items-center gap-2 flex-shrink-0">
+                        <div className="flex items-center gap-1.5 flex-shrink-0">
+                          <Link
+                            href={`/dashboard/reuse/compare?sourceId=${selectedBotId}&targetId=${bot.botId}`}
+                            className="p-2 rounded-lg hover:bg-indigo-500/10 text-indigo-400 transition-colors"
+                            title="Compare side-by-side"
+                          >
+                            <GitCompare className="h-4 w-4" />
+                          </Link>
                           <button
                             onClick={() => setExpandedSimilarityId(isExpanded ? null : bot.botId)}
                             className="p-2 rounded-lg hover:bg-white/5 text-muted-foreground hover:text-foreground transition-colors"

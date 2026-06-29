@@ -6,8 +6,18 @@ import Link from 'next/link';
 import {
   Plus, Search, Filter, X, Eye, Component as ComponentIcon,
   Package, Code2, GitBranch, CheckCircle2, AlertTriangle,
-  Archive, Layers
+  Archive, Layers, Trash2
 } from 'lucide-react';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 interface ComponentRecord {
   id: string;
@@ -93,6 +103,7 @@ export default function ComponentCatalogPage() {
   const [activeMainTab, setActiveMainTab] = useState<'catalog' | 'discovery'>('catalog');
   const [candidates, setCandidates] = useState<any[]>([]);
   const [candidatesLoading, setCandidatesLoading] = useState(false);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
   const fetchComponents = useCallback(() => {
     setLoading(true);
@@ -189,12 +200,17 @@ export default function ComponentCatalogPage() {
     } finally { setSaving(false); }
   };
 
-  const deleteComponent = async (id: string) => {
-    if (!confirm('Delete this component?')) return;
-    await fetch(`/api/components/${id}`, { method: 'DELETE' });
+  const deleteComponent = (id: string) => {
+    setDeleteConfirmId(id);
+  };
+
+  const confirmDeleteComponent = async () => {
+    if (!deleteConfirmId) return;
+    await fetch(`/api/components/${deleteConfirmId}`, { method: 'DELETE' });
     setExpandedId(null);
     setDetailData(null);
     fetchComponents();
+    setDeleteConfirmId(null);
   };
 
   const loadDetail = async (id: string) => {
@@ -637,6 +653,21 @@ export default function ComponentCatalogPage() {
           )}
         </div>
       )}
+
+      <AlertDialog open={deleteConfirmId !== null} onOpenChange={(open) => !open && setDeleteConfirmId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Component?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. This component will be permanently removed.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDeleteComponent} className="bg-red-500 hover:bg-red-600">Delete</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

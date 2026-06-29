@@ -9,6 +9,16 @@ import {
   CheckSquare, Trash2, Download, FileCode, FileArchive, FileSpreadsheet
 } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { ImportPreviewModal } from '@/components/import/ImportPreviewModal';
 import { ParsedBot } from '@/lib/parsers/types';
 import * as XLSX from 'xlsx';
@@ -72,6 +82,7 @@ export default function BotRegistryPage() {
   const [saving, setSaving] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [bulkActioning, setBulkActioning] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
 
   // Pagination & Sorting state
@@ -420,10 +431,12 @@ export default function BotRegistryPage() {
     }
   };
 
-  const handleBulkDelete = async () => {
+  const handleBulkDelete = () => {
     if (selectedIds.length === 0) return;
-    if (!confirm(`Are you sure you want to delete ${selectedIds.length} bots? This action cannot be undone.`)) return;
-    
+    setDeleteConfirmOpen(true);
+  };
+
+  const confirmBulkDelete = async () => {
     setBulkActioning(true);
     try {
       const res = await fetch(`/api/bots/bulk?ids=${selectedIds.join(',')}`, { method: 'DELETE' });
@@ -438,6 +451,7 @@ export default function BotRegistryPage() {
       toast({ title: "Error", description: "Unexpected error during bulk delete.", variant: "destructive" });
     } finally {
       setBulkActioning(false);
+      setDeleteConfirmOpen(false);
     }
   };
 
@@ -916,6 +930,21 @@ export default function BotRegistryPage() {
           </div>
         )}
       </div>
+
+      <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure you want to delete {selectedIds.length} bots?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. These bots and all their associated data will be permanently removed.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmBulkDelete} className="bg-red-500 hover:bg-red-600">Delete</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

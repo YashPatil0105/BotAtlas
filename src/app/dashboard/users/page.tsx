@@ -3,6 +3,16 @@
 import { useState, useEffect } from 'react';
 import { useToast } from '@/components/ui/use-toast';
 import { Shield, Plus, X, UserCog, Mail } from 'lucide-react';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 export default function UsersPage() {
   const [users, setUsers] = useState<any[]>([]);
@@ -11,6 +21,7 @@ export default function UsersPage() {
 
   const [newUser, setNewUser] = useState({ name: '', email: '', role: 'VIEWER', password: '' });
   const [adding, setAdding] = useState(false);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
   useEffect(() => {
     fetchUsers();
@@ -71,10 +82,14 @@ export default function UsersPage() {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to remove this user?')) return;
+  const handleDelete = (id: string) => {
+    setDeleteConfirmId(id);
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteConfirmId) return;
     try {
-      const res = await fetch(`/api/users/${id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/users/${deleteConfirmId}`, { method: 'DELETE' });
       if (res.ok) {
         toast({ title: 'User removed' });
         fetchUsers();
@@ -83,6 +98,8 @@ export default function UsersPage() {
       }
     } catch (e) {
       toast({ title: 'Error', description: 'An unexpected error occurred.', variant: 'destructive' });
+    } finally {
+      setDeleteConfirmId(null);
     }
   };
 
@@ -171,6 +188,21 @@ export default function UsersPage() {
           </div>
         </div>
       </div>
+
+      <AlertDialog open={deleteConfirmId !== null} onOpenChange={(open) => !open && setDeleteConfirmId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure you want to remove this user?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. This user will lose access to the platform.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDelete} className="bg-red-500 hover:bg-red-600">Remove</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

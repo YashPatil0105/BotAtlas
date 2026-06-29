@@ -9,9 +9,19 @@ import {
   ArrowLeft, Save, Trash2, Plus, Minus, GripVertical, X,
   CheckCircle2, AlertTriangle, Shield, FileText, GitBranch,
   ClipboardList, Bug, Upload, Wrench, MessageSquare, Activity, Copy,
-  Paperclip, FileUp
+  Paperclip, FileUp, Briefcase, Server, Calendar, Users, ExternalLink, Globe, Zap, Clock, Hash, BarChart3
 } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 // Types
 interface BotDetail {
@@ -101,6 +111,32 @@ const DEP_TYPES = ['PORTAL','APPLICATION','SFTP','API','DATABASE','VM','FOLDER',
 const FINDING_CATEGORIES = ['BUSINESS_LOGIC','ARCHITECTURE','PERFORMANCE','MAINTAINABILITY','ERROR_HANDLING','SECURITY','GOVERNANCE','DOCUMENTATION','DEPENDENCY','DATA','SCHEDULING'];
 const ROOT_CAUSE_CATS = ['CREDENTIAL_ISSUE','UI_CHANGE','SELECTOR_ISSUE','HARDCODED_PATH','MACHINE_ISSUE','BROWSER_ISSUE','NETWORK_VPN_ISSUE','SFTP_API_ISSUE','FILE_DATA_FORMAT_ISSUE','SCHEDULING_ISSUE','LOGIC_DEFECT','PERMISSION_ISSUE','PROCESS_OBSOLETE','UNKNOWN'];
 
+const CHECKLIST_SUGGESTIONS: Record<string, { category: string; observation: string; priority: string }> = {
+  businessPurposeConfirmed: { category: 'DOCUMENTATION', observation: 'Business purpose is not confirmed or documented.', priority: 'LOW' },
+  businessOwnerConfirmed: { category: 'GOVERNANCE', observation: 'Business owner has not signed off or confirmed ownership.', priority: 'MEDIUM' },
+  documentationAvailable: { category: 'DOCUMENTATION', observation: 'Bot documentation (SOP/BRD) is missing or incomplete.', priority: 'MEDIUM' },
+  botCanBeOpened: { category: 'MAINTAINABILITY', observation: 'Bot flow file cannot be opened/viewed in builder.', priority: 'HIGH' },
+  botCanBeExecuted: { category: 'MAINTAINABILITY', observation: 'Bot cannot be executed under test or sandbox conditions.', priority: 'HIGH' },
+  errorHandlingPresent: { category: 'ERROR_HANDLING', observation: 'Global and step-level error handling is not present in the bot flow.', priority: 'HIGH' },
+  retryLogicPresent: { category: 'ERROR_HANDLING', observation: 'Retry logic is missing for unstable external network/system connections.', priority: 'MEDIUM' },
+  loggingPresent: { category: 'GOVERNANCE', observation: 'Bot execution logs are missing or insufficient for troubleshooting.', priority: 'MEDIUM' },
+  auditTrailPresent: { category: 'GOVERNANCE', observation: 'Audit trail of processed records is not stored.', priority: 'MEDIUM' },
+  hardcodedCredentials: { category: 'SECURITY', observation: 'Hardcoded credentials were found in plain-text parameters/variables.', priority: 'CRITICAL' },
+  hardcodedFilePaths: { category: 'SECURITY', observation: 'Hardcoded local/network file paths were found.', priority: 'MEDIUM' },
+  usesScreenCoordinates: { category: 'ARCHITECTURE', observation: 'Uses screen coordinates/pixel offsets instead of object selectors, risking UI breakage.', priority: 'HIGH' },
+  usesUISelectors: { category: 'ARCHITECTURE', observation: 'Relies on brittle selectors without timeout standard/fallbacks.', priority: 'MEDIUM' },
+  usesReusableSubflows: { category: 'MAINTAINABILITY', observation: 'Does not utilize shared/reusable subflows or modular components.', priority: 'LOW' },
+  duplicateFilePrevention: { category: 'DATA', observation: 'Prevention mechanism for duplicate file/record processing is absent.', priority: 'HIGH' },
+  fileValidationPresent: { category: 'DATA', observation: 'Schema, format, or size validation is missing before file ingestion.', priority: 'MEDIUM' },
+  uploadVerificationPresent: { category: 'DATA', observation: 'Verification step after upload/transfer (like checking size or success response) is missing.', priority: 'MEDIUM' },
+  alertingPresent: { category: 'ERROR_HANDLING', observation: 'Alerting notifications (Teams/Email) on bot failures are missing.', priority: 'HIGH' },
+  recoveryProcedureDocumented: { category: 'DOCUMENTATION', observation: 'Recovery and manual fallback procedures are not documented in the runbook.', priority: 'MEDIUM' },
+  dependenciesIdentified: { category: 'DEPENDENCY', observation: 'System or application dependencies are not fully identified/listed.', priority: 'MEDIUM' },
+  accessConfirmed: { category: 'SECURITY', observation: 'Access credentials and network permissions are not confirmed for run systems.', priority: 'MEDIUM' },
+  sensitiveDataExposureRisk: { category: 'SECURITY', observation: 'Risk of sensitive data exposure (PII/credentials) in logs or temporary files.', priority: 'CRITICAL' },
+  changeVersionInfoAvailable: { category: 'DOCUMENTATION', observation: 'Change logs, release notes, or version metadata are not maintained.', priority: 'LOW' },
+};
+
 export default function BotDetailPage() {
   const { data: session } = useSession();
   const userRole = (session?.user as any)?.role || 'VIEWER';
@@ -115,6 +151,11 @@ export default function BotDetailPage() {
   const [activeTab, setActiveTab] = useState('overview');
   const [saving, setSaving] = useState(false);
   const [cloning, setCloning] = useState(false);
+  const [cloneConfirmOpen, setCloneConfirmOpen] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState<{ type: string; id: string; label: string } | null>(null);
+  const [checklistFindingSuggestion, setChecklistFindingSuggestion] = useState<{ category: string; observation: string; priority: string } | null>(null);
+  const [findingTaskSuggestion, setFindingTaskSuggestion] = useState<{ title: string; priority: string } | null>(null);
+  const [draggedStepIndex, setDraggedStepIndex] = useState<number | null>(null);
   const [editFields, setEditFields] = useState<Record<string, any>>({});
   const [uploadingEvidence, setUploadingEvidence] = useState(false);
   const [evidenceFile, setEvidenceFile] = useState<File | null>(null);
@@ -272,8 +313,11 @@ export default function BotDetailPage() {
     }
   };
 
-  const handleClone = async () => {
-    if (!confirm("Are you sure you want to clone this bot? All process steps and dependencies will be copied.")) return;
+  const handleClone = () => {
+    setCloneConfirmOpen(true);
+  };
+
+  const confirmClone = async () => {
     setCloning(true);
     try {
       const res = await fetch(`/api/bots/${botId}/clone`, { method: 'POST' });
@@ -286,7 +330,10 @@ export default function BotDetailPage() {
       }
     } catch {
       toast({ title: "Error", description: "An unexpected error occurred while cloning.", variant: "destructive" });
-    } finally { setCloning(false); }
+    } finally { 
+      setCloning(false); 
+      setCloneConfirmOpen(false);
+    }
   };
 
   const addStep = async () => {
@@ -307,7 +354,52 @@ export default function BotDetailPage() {
     }
   };
 
+  const handleStepDragStart = (e: React.DragEvent, index: number) => {
+    setDraggedStepIndex(index);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleStepDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+  };
+
+  const handleStepDrop = async (e: React.DragEvent, dropIndex: number) => {
+    e.preventDefault();
+    if (draggedStepIndex === null || draggedStepIndex === dropIndex) return;
+
+    const reordered = [...bot!.steps];
+    const [moved] = reordered.splice(draggedStepIndex, 1);
+    reordered.splice(dropIndex, 0, moved);
+
+    const payload = reordered.map((step, idx) => ({
+      id: step.id,
+      stepOrder: idx + 1,
+    }));
+
+    try {
+      const res = await fetch(`/api/bots/${botId}/steps`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        toast({ title: "Workflow Reordered", description: "Successfully updated step sequence." });
+        fetchBot();
+      } else {
+        toast({ title: "Error Reordering", description: "Failed to save workflow order.", variant: "destructive" });
+      }
+    } catch {
+      toast({ title: "Error", description: "An unexpected error occurred.", variant: "destructive" });
+    } finally {
+      setDraggedStepIndex(null);
+    }
+  };
+
   const deleteStep = async (stepId: string) => {
+    setDeleteConfirm({ type: 'step', id: stepId, label: 'process step' });
+  };
+
+  const executeDeleteStep = async (stepId: string) => {
     const res = await fetch(`/api/bots/${botId}/steps?stepId=${stepId}`, { method: 'DELETE' });
     if (res.ok) {
       toast({ title: "Step Deleted", description: "Successfully removed step from the workflow." });
@@ -332,6 +424,10 @@ export default function BotDetailPage() {
   };
 
   const deleteDependency = async (id: string) => {
+    setDeleteConfirm({ type: 'dependency', id, label: 'dependency' });
+  };
+
+  const executeDeleteDependency = async (id: string) => {
     const res = await fetch(`/api/bots/${botId}/dependencies?id=${id}`, { method: 'DELETE' });
     if (res.ok) {
       toast({ title: "Dependency Deleted", description: "Successfully removed dependency." });
@@ -347,15 +443,46 @@ export default function BotDetailPage() {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newFinding),
     });
     if (res.ok) {
-      setNewFinding({ category: 'DOCUMENTATION', observation: '', priority: 'MEDIUM' });
       toast({ title: "Finding Recorded", description: "Successfully added finding." });
+      // If critical or high, prompt task suggestion
+      if (newFinding.priority === 'CRITICAL' || newFinding.priority === 'HIGH') {
+        setFindingTaskSuggestion({
+          title: `Address finding: ${newFinding.observation}`,
+          priority: newFinding.priority,
+        });
+      }
+      setNewFinding({ category: 'DOCUMENTATION', observation: '', priority: 'MEDIUM' });
       fetchBot();
     } else {
       toast({ title: "Error Recording Finding", description: "Failed to record finding.", variant: "destructive" });
     }
   };
 
+  const createRemediationFromFinding = async () => {
+    if (!findingTaskSuggestion) return;
+    const res = await fetch(`/api/bots/${botId}/remediation`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: findingTaskSuggestion.title,
+        priority: findingTaskSuggestion.priority,
+        owner: '',
+      }),
+    });
+    if (res.ok) {
+      toast({ title: "Remediation Task Created", description: "Task successfully generated and linked to this finding." });
+      fetchBot();
+    } else {
+      toast({ title: "Error Creating Task", description: "Failed to auto-create remediation task.", variant: "destructive" });
+    }
+    setFindingTaskSuggestion(null);
+  };
+
   const deleteFinding = async (id: string) => {
+    setDeleteConfirm({ type: 'finding', id, label: 'finding' });
+  };
+
+  const executeDeleteFinding = async (id: string) => {
     const res = await fetch(`/api/bots/${botId}/findings?id=${id}`, { method: 'DELETE' });
     if (res.ok) {
       toast({ title: "Finding Deleted", description: "Successfully removed finding." });
@@ -393,6 +520,10 @@ export default function BotDetailPage() {
   };
 
   const deleteRootCause = async (id: string) => {
+    setDeleteConfirm({ type: 'rootcause', id, label: 'root cause assessment' });
+  };
+
+  const executeDeleteRootCause = async (id: string) => {
     const res = await fetch(`/api/bots/${botId}/root-cause?id=${id}`, { method: 'DELETE' });
     if (res.ok) {
       toast({ title: "Assessment Deleted", description: "Successfully removed root cause assessment." });
@@ -417,6 +548,10 @@ export default function BotDetailPage() {
   };
 
   const deleteRemediation = async (id: string) => {
+    setDeleteConfirm({ type: 'remediation', id, label: 'remediation task' });
+  };
+
+  const executeDeleteRemediation = async (id: string) => {
     const res = await fetch(`/api/bots/${botId}/remediation?id=${id}`, { method: 'DELETE' });
     if (res.ok) {
       toast({ title: "Task Deleted", description: "Successfully removed remediation task." });
@@ -426,10 +561,21 @@ export default function BotDetailPage() {
     }
   };
 
+  const confirmGenericDelete = async () => {
+    if (!deleteConfirm) return;
+    const { type, id } = deleteConfirm;
+    if (type === 'step') await executeDeleteStep(id);
+    else if (type === 'dependency') await executeDeleteDependency(id);
+    else if (type === 'finding') await executeDeleteFinding(id);
+    else if (type === 'rootcause') await executeDeleteRootCause(id);
+    else if (type === 'remediation') await executeDeleteRemediation(id);
+    setDeleteConfirm(null);
+  };
+
   const updateRemediationStatus = async (id: string, status: string) => {
     const res = await fetch(`/api/bots/${botId}/remediation`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, status }),
+      body: JSON.stringify({ taskId: id, status }),
     });
     if (res.ok) {
       toast({ title: "Task Updated", description: `Task status set to ${status.replace(/_/g, ' ')}.` });
@@ -446,10 +592,37 @@ export default function BotDetailPage() {
     });
     if (res.ok) {
       toast({ title: "Checklist Updated", description: "Successfully updated checklist item." });
+      if (value === 'NO' && CHECKLIST_SUGGESTIONS[item]) {
+        setChecklistFindingSuggestion({
+          category: CHECKLIST_SUGGESTIONS[item].category,
+          observation: CHECKLIST_SUGGESTIONS[item].observation,
+          priority: CHECKLIST_SUGGESTIONS[item].priority,
+        });
+      }
       fetchBot();
     } else {
       toast({ title: "Error Updating Checklist", description: "Failed to update checklist item.", variant: "destructive" });
     }
+  };
+
+  const createFindingFromChecklist = async () => {
+    if (!checklistFindingSuggestion) return;
+    const res = await fetch(`/api/bots/${botId}/findings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        category: checklistFindingSuggestion.category,
+        observation: checklistFindingSuggestion.observation,
+        priority: checklistFindingSuggestion.priority,
+      }),
+    });
+    if (res.ok) {
+      toast({ title: "Finding Created", description: "Finding successfully generated from checklist item." });
+      fetchBot();
+    } else {
+      toast({ title: "Error Creating Finding", description: "Failed to auto-create finding.", variant: "destructive" });
+    }
+    setChecklistFindingSuggestion(null);
   };
 
 
@@ -527,226 +700,276 @@ export default function BotDetailPage() {
   );
 
   return (
-    <div className="space-y-4 animate-fade-in">
+    <div className="space-y-6 animate-fade-in">
       <Script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js" strategy="lazyOnload" onLoad={() => {
         (window as any).mermaid.initialize({ startOnLoad: false, theme: 'dark' });
       }} />
 
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <button onClick={() => router.push('/dashboard/bots')} className="p-2 rounded-lg hover:bg-white/5 transition-colors">
-            <ArrowLeft className="h-4 w-4" />
-          </button>
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="font-mono text-sm text-primary">{bot.botCode}</span>
-              <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_STYLES[bot.currentStatus]}`}>
-                {bot.currentStatus.replace(/_/g, ' ')}
-              </span>
-            </div>
-            <h1 className="text-xl font-bold">{bot.name}</h1>
-          </div>
-        </div>
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-6">
-            {/* Completeness Gauge */}
-            <div className="flex flex-col items-center">
-              <span className="text-[10px] text-muted-foreground uppercase tracking-widest font-semibold mb-1">Completeness</span>
-              <div className="relative h-12 w-12 flex items-center justify-center">
-                <svg className="absolute inset-0 h-full w-full -rotate-90 transform" viewBox="0 0 36 36">
-                  <path className="text-muted stroke-current" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" strokeWidth="3" />
-                  <path className="text-blue-500 stroke-current transition-all duration-1000 ease-out" strokeDasharray={`${completeness}, 100`} d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" strokeWidth="3" strokeLinecap="round" />
-                </svg>
-                <span className="text-xs font-medium">{completeness}%</span>
+      {/* ── HERO HEADER ──────────────────────────────────────────── */}
+      <div className="relative overflow-hidden rounded-2xl border border-border/50 bg-gradient-to-br from-card via-card to-primary/[0.03]">
+        {/* Decorative background elements */}
+        <div className="absolute top-0 right-0 w-96 h-96 bg-primary/[0.03] rounded-full blur-3xl -translate-y-1/2 translate-x-1/3" />
+        <div className="absolute bottom-0 left-0 w-64 h-64 bg-blue-500/[0.02] rounded-full blur-3xl translate-y-1/2 -translate-x-1/4" />
+        
+        <div className="relative p-6">
+          <div className="flex items-start justify-between gap-4">
+            {/* Left: Back + Bot Identity */}
+            <div className="flex items-start gap-4">
+              <button onClick={() => router.push('/dashboard/bots')} className="mt-1 p-2.5 rounded-xl bg-muted/50 hover:bg-muted border border-border/50 transition-all hover:scale-105 active:scale-95">
+                <ArrowLeft className="h-4 w-4" />
+              </button>
+              <div className="space-y-2">
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  <span className="font-mono text-sm text-primary bg-primary/10 px-2.5 py-1 rounded-lg border border-primary/20 font-bold tracking-wider">{bot.botCode}</span>
+                  <span className={`px-2.5 py-1 rounded-lg text-xs font-bold uppercase tracking-wider border ${STATUS_STYLES[bot.currentStatus]} ${
+                    bot.currentStatus === 'ACTIVE' ? 'border-green-500/30' :
+                    bot.currentStatus === 'FAILED' ? 'border-red-500/30' :
+                    bot.currentStatus === 'INACTIVE' ? 'border-amber-500/30' : 'border-border/50'
+                  }`}>
+                    <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1.5 ${
+                      bot.currentStatus === 'ACTIVE' ? 'bg-green-400 animate-pulse' :
+                      bot.currentStatus === 'FAILED' ? 'bg-red-400' :
+                      bot.currentStatus === 'INACTIVE' ? 'bg-amber-400' : 'bg-gray-400'
+                    }`} />
+                    {bot.currentStatus.replace(/_/g, ' ')}
+                  </span>
+                  {bot.criticality && (
+                    <span className={`px-2 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider border ${
+                      bot.criticality === 'CRITICAL' ? 'bg-red-500/10 text-red-400 border-red-500/20' :
+                      bot.criticality === 'HIGH' ? 'bg-orange-500/10 text-orange-400 border-orange-500/20' :
+                      bot.criticality === 'MEDIUM' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' :
+                      'bg-slate-500/10 text-slate-400 border-slate-500/20'
+                    }`}>
+                      {bot.criticality} Priority
+                    </span>
+                  )}
+                </div>
+                <h1 className="text-2xl font-bold tracking-tight">{bot.name}</h1>
+                {bot.businessPurpose && (
+                  <p className="text-sm text-muted-foreground max-w-2xl leading-relaxed line-clamp-2">{bot.businessPurpose}</p>
+                )}
+                <div className="flex items-center gap-4 text-xs text-muted-foreground pt-1">
+                  {bot.vendor && <span className="flex items-center gap-1.5"><Briefcase className="h-3 w-3" />{bot.vendor}</span>}
+                  {bot.technology && <span className="flex items-center gap-1.5"><Server className="h-3 w-3" />{bot.technology.replace(/_/g, ' ')}</span>}
+                  {bot.department && <span className="flex items-center gap-1.5"><Users className="h-3 w-3" />{bot.department}</span>}
+                  {bot.environment && <span className="flex items-center gap-1.5"><Globe className="h-3 w-3" />{bot.environment}</span>}
+                </div>
               </div>
             </div>
 
-            {/* Health Score Gauge */}
-            <div className="flex flex-col items-center">
-              <span className="text-[10px] text-muted-foreground uppercase tracking-widest font-semibold mb-1">Health Score</span>
-              <div className="relative h-12 w-12 flex items-center justify-center">
-                <svg className="absolute inset-0 h-full w-full -rotate-90 transform" viewBox="0 0 36 36">
-                  <path className="text-muted stroke-current" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" strokeWidth="3" />
-                  <path className={`${healthScore > 80 ? 'text-green-500' : healthScore > 50 ? 'text-yellow-500' : 'text-red-500'} stroke-current transition-all duration-1000 ease-out`} strokeDasharray={`${healthScore}, 100`} d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" strokeWidth="3" strokeLinecap="round" />
-                </svg>
-                <span className="text-xs font-medium">{healthScore}</span>
+            {/* Right: Scores + Actions */}
+            <div className="flex items-center gap-5 flex-shrink-0">
+              {/* Completeness Gauge */}
+              <div className="flex flex-col items-center gap-1.5">
+                <div className="relative h-16 w-16 flex items-center justify-center">
+                  <svg className="absolute inset-0 h-full w-full -rotate-90 transform" viewBox="0 0 36 36">
+                    <path className="text-muted/30 stroke-current" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" strokeWidth="2.5" />
+                    <path className="text-blue-500 stroke-current transition-all duration-1000 ease-out" strokeDasharray={`${completeness}, 100`} d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" strokeWidth="2.5" strokeLinecap="round" />
+                  </svg>
+                  <span className="text-sm font-bold">{completeness}<span className="text-[10px] text-muted-foreground">%</span></span>
+                </div>
+                <span className="text-[10px] text-muted-foreground font-medium tracking-wide">Complete</span>
               </div>
+
+              {/* Health Score Gauge */}
+              <div className="flex flex-col items-center gap-1.5">
+                <div className="relative h-16 w-16 flex items-center justify-center">
+                  <svg className="absolute inset-0 h-full w-full -rotate-90 transform" viewBox="0 0 36 36">
+                    <path className="text-muted/30 stroke-current" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" strokeWidth="2.5" />
+                    <path className={`${healthScore > 80 ? 'text-emerald-500' : healthScore > 50 ? 'text-amber-500' : 'text-rose-500'} stroke-current transition-all duration-1000 ease-out`} strokeDasharray={`${healthScore}, 100`} d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" strokeWidth="2.5" strokeLinecap="round" />
+                  </svg>
+                  <span className="text-sm font-bold">{healthScore}</span>
+                </div>
+                <span className="text-[10px] text-muted-foreground font-medium tracking-wide">Health</span>
+              </div>
+
+              {/* Divider */}
+              <div className="w-px h-12 bg-border/50" />
+
+              {/* Review Sign-off and Validation Actions */}
+              {(bot.reviewStatus === 'NOT_STARTED' || bot.reviewStatus === 'IN_PROGRESS') && (
+                <button
+                  onClick={() => saveBot({ ...editFields, reviewStatus: 'AWAITING_VALIDATION' })}
+                  disabled={saving}
+                  className="flex items-center gap-2 px-4 py-2.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-xl text-sm font-semibold transition-all shadow-sm shadow-amber-500/5 active:scale-95"
+                >
+                  <Clock className="h-4 w-4" /> Submit for Validation
+                </button>
+              )}
+
+              {bot.reviewStatus === 'AWAITING_VALIDATION' && (
+                userRole === 'ADMIN' ? (
+                  <button
+                    onClick={() => saveBot({ ...editFields, reviewStatus: 'COMPLETED' })}
+                    disabled={saving}
+                    className="flex items-center gap-2 px-4 py-2.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-xl text-sm font-semibold transition-all shadow-sm shadow-emerald-500/5 active:scale-95"
+                  >
+                    <CheckCircle2 className="h-4 w-4" /> Approve & Sign-off
+                  </button>
+                ) : (
+                  <div className="flex items-center gap-2 px-4 py-2.5 bg-amber-500/5 text-amber-500/70 border border-amber-500/10 rounded-xl text-sm font-medium">
+                    <Clock className="h-4 w-4 animate-pulse" /> Pending Validation
+                  </div>
+                )
+              )}
+
+              {bot.reviewStatus === 'COMPLETED' && (
+                <div className="flex items-center gap-2 px-4 py-2.5 bg-emerald-500/5 text-emerald-500/80 border border-emerald-500/20 rounded-xl text-sm font-bold">
+                  <CheckCircle2 className="h-4 w-4 text-emerald-400" /> Verified & Complete
+                </div>
+              )}
+
+              {userRole === 'ADMIN' && (
+                <button onClick={handleClone} disabled={cloning}
+                  className="flex items-center gap-2 px-4 py-2.5 bg-card hover:bg-muted border border-border/50 rounded-xl text-sm font-medium disabled:opacity-50 transition-all hover:scale-[1.02] active:scale-[0.98] shadow-sm">
+                  <Copy className="h-4 w-4 text-primary" /> {cloning ? 'Cloning...' : 'Clone Bot'}
+                </button>
+              )}
             </div>
           </div>
-          {userRole === 'ADMIN' && (
-            <button onClick={handleClone} disabled={cloning}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-secondary text-secondary-foreground border border-border/50 rounded-lg text-sm font-medium hover:bg-white/5 disabled:opacity-50 transition-all">
-              <Copy className="h-4 w-4" /> {cloning ? 'Cloning...' : 'Clone Bot'}
-            </button>
-          )}
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-1 overflow-x-auto border-b border-border/50 pb-0">
+      {/* ── TABS ────────────────────────────────────────────────── */}
+      <div className="flex gap-1 overflow-x-auto pb-0 -mb-px">
         {TABS.map(tab => (
           <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-t-lg transition-all whitespace-nowrap ${
+            className={`relative flex items-center gap-2 px-5 py-3 text-sm font-medium rounded-t-xl transition-all whitespace-nowrap group ${
               activeTab === tab.id
-                ? 'text-primary bg-primary/10 border-b-2 border-primary'
-                : 'text-muted-foreground hover:text-foreground hover:bg-white/5'
+                ? 'text-primary bg-card border border-border/50 border-b-transparent shadow-sm'
+                : 'text-muted-foreground hover:text-foreground hover:bg-card/50'
             }`}>
-            <tab.icon className="h-4 w-4" /> {tab.label}
+            <tab.icon className={`h-4 w-4 transition-colors ${activeTab === tab.id ? 'text-primary' : 'text-muted-foreground group-hover:text-foreground'}`} />
+            {tab.label}
             {tab.id === 'findings' && bot.findings.length > 0 && (
-              <span className="ml-1 bg-destructive/20 text-destructive text-xs px-1.5 py-0.5 rounded-full">{bot.findings.length}</span>
+              <span className="ml-1 bg-red-500/15 text-red-400 text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[20px] text-center">{bot.findings.length}</span>
             )}
-            {tab.id === 'steps' && <span className="ml-1 text-xs text-muted-foreground">{bot.steps.length}</span>}
+            {tab.id === 'steps' && bot.steps.length > 0 && (
+              <span className="ml-1 bg-primary/10 text-primary text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[20px] text-center">{bot.steps.length}</span>
+            )}
           </button>
         ))}
       </div>
+      <div className="border-t border-border/50 -mt-6" />
 
       {/* Tab Content */}
-      <div className="animate-fade-in">
+      <div className="animate-fade-in pt-2">
         {/* OVERVIEW TAB */}
         {activeTab === 'overview' && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <div className="space-y-4">
-              <div className="rounded-xl border border-border/50 bg-card/80 p-5 space-y-4">
-                <h3 className="text-sm font-semibold">Business Information</h3>
-                {[
-                  { key: 'businessPurpose', label: 'Business Purpose', type: 'textarea' },
-                  { key: 'businessProcess', label: 'Business Process', type: 'text' },
-                  { key: 'department', label: 'Department', type: 'text' },
-                  { key: 'businessOwner', label: 'Business Owner', type: 'text' },
-                  { key: 'technicalOwner', label: 'Technical Owner', type: 'text' },
-                ].map(f => (
-                  <div key={f.key}>
-                    <label className="text-xs text-muted-foreground mb-1 block">{f.label}</label>
-                    {f.type === 'textarea' ? (
-                      <textarea value={editFields[f.key] || ''} onChange={e => setEditFields(p => ({ ...p, [f.key]: e.target.value }))}
-                        disabled={userRole === 'VIEWER'}
-                        rows={3} className="w-full px-3 py-2 bg-background border border-border/50 rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary/50" />
-                    ) : (
-                      <input type="text" value={editFields[f.key] || ''} onChange={e => setEditFields(p => ({ ...p, [f.key]: e.target.value }))}
-                        disabled={userRole === 'VIEWER'}
-                        className="w-full px-3 py-2 bg-background border border-border/50 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/50" />
-                    )}
-                  </div>
-                ))}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* ── LEFT COLUMN ── */}
+            <div className="space-y-6">
+              {/* Business Information */}
+              <div className="rounded-2xl border border-border/50 bg-card/80 backdrop-blur overflow-hidden">
+                <div className="px-5 py-3.5 border-b border-border/30 bg-muted/20 flex items-center gap-2.5">
+                  <div className="p-1.5 rounded-md bg-blue-500/10"><Briefcase className="h-3.5 w-3.5 text-blue-400" /></div>
+                  <h3 className="text-sm font-bold">Business Information</h3>
+                </div>
+                <div className="p-5 space-y-4">
+                  {[
+                    { key: 'businessPurpose', label: 'Business Purpose', type: 'textarea' },
+                    { key: 'businessProcess', label: 'Business Process', type: 'text' },
+                    { key: 'department', label: 'Department', type: 'text' },
+                    { key: 'businessOwner', label: 'Business Owner', type: 'text' },
+                    { key: 'technicalOwner', label: 'Technical Owner', type: 'text' },
+                  ].map(f => (
+                    <div key={f.key}>
+                      <label className="text-xs text-muted-foreground mb-1 block font-medium">{f.label}</label>
+                      {f.type === 'textarea' ? (
+                        <textarea value={editFields[f.key] || ''} onChange={e => setEditFields(p => ({ ...p, [f.key]: e.target.value }))}
+                          disabled={userRole === 'VIEWER'}
+                          rows={2} className="w-full px-3 py-2 bg-background border border-border/50 rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/50 transition-all disabled:opacity-60" />
+                      ) : (
+                        <input type="text" value={editFields[f.key] || ''} onChange={e => setEditFields(p => ({ ...p, [f.key]: e.target.value }))}
+                          disabled={userRole === 'VIEWER'}
+                          className="w-full px-3 py-2 bg-background border border-border/50 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/50 transition-all disabled:opacity-60" />
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
               
-              {/* Additional Registry Info */}
-              <div className="rounded-xl border border-border/50 bg-card/80 p-5 space-y-4 mt-4">
-                <h3 className="text-sm font-semibold">Registry Information</h3>
-                {[
-                  { key: 'projectName', label: 'Project Name', type: 'text' },
-                  { key: 'partner', label: 'Partner', type: 'text' },
-                  { key: 'processId', label: 'Process ID', type: 'text' },
-                  { key: 'departmentSpoc', label: 'Department SPOC', type: 'text' },
-                  { key: 'vendorSpoc', label: 'Vendor SPOC', type: 'text' },
-                  { key: 'unitySpoc', label: 'Unity SPOC', type: 'text' },
-                  { key: 'roi', label: 'ROI (Time / FTE)', type: 'text' },
-                  { key: 'oldBotsNewBots', label: 'Old/New Bots', type: 'text' },
-                  { key: 'vendorPaymentStatus', label: 'Vendor Payment Status', type: 'text' },
-                ].map(f => (
-                  <div key={f.key}>
-                    <label className="text-xs text-muted-foreground mb-1 block">{f.label}</label>
-                    <input type="text" value={editFields[f.key] || ''} onChange={e => setEditFields(p => ({ ...p, [f.key]: e.target.value }))}
+              {/* Technical Details */}
+              <div className="rounded-2xl border border-border/50 bg-card/80 backdrop-blur overflow-hidden">
+                <div className="px-5 py-3.5 border-b border-border/30 bg-muted/20 flex items-center gap-2.5">
+                  <div className="p-1.5 rounded-md bg-cyan-500/10"><Server className="h-3.5 w-3.5 text-cyan-400" /></div>
+                  <h3 className="text-sm font-bold">Technical Details</h3>
+                </div>
+                <div className="p-5 grid grid-cols-2 gap-4">
+                  {[
+                    { key: 'vendor', label: 'Vendor', type: 'text' },
+                    { key: 'technology', label: 'Technology', type: 'select', options: ['PAD','POWER_AUTOMATE_CLOUD','UI_PATH','BLUE_PRISM','AUTOMATION_ANYWHERE','OTHER'] },
+                    { key: 'environment', label: 'Environment', type: 'select', options: ['DEFAULT','DEV','UAT','PROD','UNKNOWN'] },
+                    { key: 'currentStatus', label: 'Current Status', type: 'select', options: ['UNKNOWN','ACTIVE','FAILED','INACTIVE','OBSOLETE','RETIRED'] },
+                    { key: 'reviewStatus', label: 'Review Status', type: 'select', options: ['NOT_STARTED','IN_PROGRESS','COMPLETED','AWAITING_VALIDATION'] },
+                    { key: 'criticality', label: 'Criticality', type: 'select', options: ['CRITICAL','HIGH','MEDIUM','LOW'] },
+                  ].map(f => (
+                    <div key={f.key}>
+                      <label className="text-xs text-muted-foreground mb-1 block font-medium">{f.label}</label>
+                      {f.type === 'select' ? (
+                        <select value={editFields[f.key] || ''} onChange={e => setEditFields(p => ({ ...p, [f.key]: e.target.value }))}
+                          disabled={userRole === 'VIEWER'}
+                          className="w-full px-3 py-2 bg-background border border-border/50 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all disabled:opacity-60">
+                          {f.options!.map(o => <option key={o} value={o}>{o.replace(/_/g, ' ')}</option>)}
+                        </select>
+                      ) : (
+                        <input type="text" value={editFields[f.key] || ''} onChange={e => setEditFields(p => ({ ...p, [f.key]: e.target.value }))}
+                          disabled={userRole === 'VIEWER'}
+                          className="w-full px-3 py-2 bg-background border border-border/50 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all disabled:opacity-60" />
+                      )}
+                    </div>
+                  ))}
+                  <div className="col-span-2">
+                    <label className="text-xs text-muted-foreground mb-1 block font-medium">Schedule / Trigger</label>
+                    <input type="text" value={editFields['scheduleOrTrigger'] || ''} onChange={e => setEditFields(p => ({ ...p, scheduleOrTrigger: e.target.value }))}
                       disabled={userRole === 'VIEWER'}
-                      className="w-full px-3 py-2 bg-background border border-border/50 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/50" />
+                      className="w-full px-3 py-2 bg-background border border-border/50 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all disabled:opacity-60" />
                   </div>
-                ))}
+                </div>
               </div>
-            </div>
-            <div className="space-y-4">
-              <div className="rounded-xl border border-border/50 bg-card/80 p-5 space-y-4">
-                <h3 className="text-sm font-semibold">Technical Details</h3>
-                {[
-                  { key: 'vendor', label: 'Vendor', type: 'text' },
-                  { key: 'technology', label: 'Technology', type: 'select', options: ['PAD','POWER_AUTOMATE_CLOUD','UI_PATH','BLUE_PRISM','AUTOMATION_ANYWHERE','OTHER'] },
-                  { key: 'environment', label: 'Environment', type: 'select', options: ['DEFAULT','DEV','UAT','PROD','UNKNOWN'] },
-                  { key: 'currentStatus', label: 'Current Status', type: 'select', options: ['UNKNOWN','ACTIVE','FAILED','INACTIVE','OBSOLETE','RETIRED'] },
-                  { key: 'reviewStatus', label: 'Review Status', type: 'select', options: ['NOT_STARTED','IN_PROGRESS','COMPLETED','AWAITING_VALIDATION'] },
-                  { key: 'criticality', label: 'Criticality', type: 'select', options: ['CRITICAL','HIGH','MEDIUM','LOW'] },
-                  { key: 'scheduleOrTrigger', label: 'Schedule / Trigger', type: 'text' },
-                ].map(f => (
-                  <div key={f.key}>
-                    <label className="text-xs text-muted-foreground mb-1 block">{f.label}</label>
-                    {f.type === 'select' ? (
-                      <select value={editFields[f.key] || ''} onChange={e => setEditFields(p => ({ ...p, [f.key]: e.target.value }))}
-                        disabled={userRole === 'VIEWER'}
-                        className="w-full px-3 py-2 bg-background border border-border/50 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/50">
-                        {f.options!.map(o => <option key={o} value={o}>{o.replace(/_/g, ' ')}</option>)}
-                      </select>
-                    ) : (
-                      <input type="text" value={editFields[f.key] || ''} onChange={e => setEditFields(p => ({ ...p, [f.key]: e.target.value }))}
-                        disabled={userRole === 'VIEWER'}
-                        className="w-full px-3 py-2 bg-background border border-border/50 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/50" />
-                    )}
-                  </div>
-                ))}
-              </div>
-              
-              {/* Additional Operations Info */}
-              <div className="rounded-xl border border-border/50 bg-card/80 p-5 space-y-4 mt-4">
-                <h3 className="text-sm font-semibold">Operations Information</h3>
-                {[
-                  { key: 'server', label: 'Server', type: 'text' },
-                  { key: 'botExecutionUserId', label: 'Bot Execution User ID', type: 'text' },
-                  { key: 'botAssociated', label: 'Bot Associated', type: 'text' },
-                  { key: 'botFrequency', label: 'Bot Frequency', type: 'text' },
-                  { key: 'startDate', label: 'Start Date', type: 'text' },
-                  { key: 'cabDate', label: 'CAB Date', type: 'text' },
-                  { key: 'effortsInDays', label: 'Efforts (Days)', type: 'number' },
-                ].map(f => (
-                  <div key={f.key}>
-                    <label className="text-xs text-muted-foreground mb-1 block">{f.label}</label>
-                    <input type={f.type} value={editFields[f.key] || ''} onChange={e => setEditFields(p => ({ ...p, [f.key]: f.type === 'number' ? Number(e.target.value) : e.target.value }))}
-                      disabled={userRole === 'VIEWER'}
-                      className="w-full px-3 py-2 bg-background border border-border/50 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/50" />
-                  </div>
-                ))}
-                
+
+              {/* Documentation Links */}
+              <div className="rounded-2xl border border-border/50 bg-card/80 backdrop-blur overflow-hidden">
+                <div className="px-5 py-3.5 border-b border-border/30 bg-muted/20 flex items-center gap-2.5">
+                  <div className="p-1.5 rounded-md bg-amber-500/10"><FileText className="h-3.5 w-3.5 text-amber-400" /></div>
+                  <h3 className="text-sm font-bold">Documentation</h3>
+                </div>
                 {(() => {
                   let docs: Record<string, string> = {};
                   try { docs = JSON.parse(editFields['docsLinks'] || '{}'); } 
                   catch { docs = { Other: editFields['docsLinks'] || '' }; }
-
                   return (
-                    <div className="bg-muted/10 p-3 rounded-lg border border-border/30">
-                      <label className="text-xs font-semibold text-foreground mb-2 block">Documentation Links</label>
-                      <div className="flex gap-2 mb-3">
-                        <select 
-                          value=""
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            if (val && docs[val]) window.open(docs[val], '_blank');
-                          }}
-                          className="w-full px-3 py-2 bg-background border border-border/50 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 cursor-pointer"
-                        >
-                          <option value="">Select Document to View...</option>
-                          {['SOP', 'BRD', 'FSD', 'Other'].map(type => (
-                            <option key={type} value={type} disabled={!docs[type]}>
-                              {type} {docs[type] ? '✓ (Open Link)' : '(Not added)'}
-                            </option>
-                          ))}
-                        </select>
+                    <div className="p-5 space-y-4">
+                      <div className="flex flex-wrap gap-2">
+                        {['SOP', 'BRD', 'FSD', 'Other'].map(type => (
+                          <button key={type}
+                            onClick={() => docs[type] && window.open(docs[type], '_blank')}
+                            disabled={!docs[type]}
+                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
+                              docs[type] 
+                                ? 'bg-primary/10 text-primary border-primary/20 hover:bg-primary/20 cursor-pointer' 
+                                : 'bg-muted/30 text-muted-foreground border-border/30 cursor-not-allowed opacity-50'
+                            }`}>
+                            <ExternalLink className="h-3 w-3" />
+                            {type}
+                            {docs[type] && <CheckCircle2 className="h-3 w-3 text-green-400" />}
+                          </button>
+                        ))}
                       </div>
-                      
                       {userRole !== 'VIEWER' && (
-                        <div className="space-y-2 border-t border-border/50 pt-3">
-                          <label className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Edit Links</label>
+                        <div className="space-y-2 border-t border-border/30 pt-3">
+                          <label className="text-[10px] text-muted-foreground uppercase tracking-wider font-bold">Edit Links</label>
                           {['SOP', 'BRD', 'FSD', 'Other'].map(type => (
                             <div key={type} className="flex items-center gap-2">
-                              <span className="text-xs font-medium w-10 text-muted-foreground">{type}</span>
-                              <input 
-                                type="text"
-                                placeholder={`Paste ${type} URL...`}
-                                value={docs[type] || ''}
+                              <span className="text-[10px] font-bold w-9 text-muted-foreground uppercase">{type}</span>
+                              <input type="text" placeholder={`Paste ${type} URL...`} value={docs[type] || ''}
                                 onChange={e => {
                                   const newDocs = { ...docs };
                                   if (e.target.value.trim()) newDocs[type] = e.target.value.trim();
                                   else delete newDocs[type];
                                   setEditFields(p => ({ ...p, docsLinks: Object.keys(newDocs).length ? JSON.stringify(newDocs) : null }));
                                 }}
-                                className="flex-1 px-2 py-1.5 bg-background border border-border/50 rounded text-xs focus:outline-none focus:ring-1 focus:ring-primary/50"
-                              />
+                                className="flex-1 px-2.5 py-1.5 bg-background border border-border/50 rounded-md text-xs focus:outline-none focus:ring-1 focus:ring-primary/50 transition-all" />
                             </div>
                           ))}
                         </div>
@@ -754,18 +977,94 @@ export default function BotDetailPage() {
                     </div>
                   );
                 })()}
-                <div>
-                  <label className="text-xs text-muted-foreground mb-1 block">Next Steps</label>
-                  <textarea value={editFields['nextSteps'] || ''} onChange={e => setEditFields(p => ({ ...p, nextSteps: e.target.value }))}
-                    disabled={userRole === 'VIEWER'}
-                    rows={2} className="w-full px-3 py-2 bg-background border border-border/50 rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary/50" />
+              </div>
+            </div>
+
+            {/* ── RIGHT COLUMN ── */}
+            <div className="space-y-6">
+              {/* Registry Information */}
+              <div className="rounded-2xl border border-border/50 bg-card/80 backdrop-blur overflow-hidden">
+                <div className="px-5 py-3.5 border-b border-border/30 bg-muted/20 flex items-center gap-2.5">
+                  <div className="p-1.5 rounded-md bg-violet-500/10"><Hash className="h-3.5 w-3.5 text-violet-400" /></div>
+                  <h3 className="text-sm font-bold">Registry Information</h3>
+                </div>
+                <div className="p-5 grid grid-cols-2 gap-4">
+                  {[
+                    { key: 'projectName', label: 'Project Name' },
+                    { key: 'partner', label: 'Partner' },
+                    { key: 'processId', label: 'Process ID' },
+                    { key: 'departmentSpoc', label: 'Dept SPOC' },
+                    { key: 'vendorSpoc', label: 'Vendor SPOC' },
+                    { key: 'unitySpoc', label: 'Unity SPOC' },
+                    { key: 'roi', label: 'ROI (Time / FTE)' },
+                    { key: 'oldBotsNewBots', label: 'Old/New Bots' },
+                  ].map(f => (
+                    <div key={f.key}>
+                      <label className="text-xs text-muted-foreground mb-1 block font-medium">{f.label}</label>
+                      <input type="text" value={editFields[f.key] || ''} onChange={e => setEditFields(p => ({ ...p, [f.key]: e.target.value }))}
+                        disabled={userRole === 'VIEWER'}
+                        className="w-full px-3 py-2 bg-background border border-border/50 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all disabled:opacity-60" />
+                    </div>
+                  ))}
+                  <div className="col-span-2">
+                    <label className="text-xs text-muted-foreground mb-1 block font-medium">Vendor Payment Status</label>
+                    <input type="text" value={editFields['vendorPaymentStatus'] || ''} onChange={e => setEditFields(p => ({ ...p, vendorPaymentStatus: e.target.value }))}
+                      disabled={userRole === 'VIEWER'}
+                      className="w-full px-3 py-2 bg-background border border-border/50 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all disabled:opacity-60" />
+                  </div>
+                </div>
+              </div>
+              
+              {/* Operations & Infrastructure */}
+              <div className="rounded-2xl border border-border/50 bg-card/80 backdrop-blur overflow-hidden">
+                <div className="px-5 py-3.5 border-b border-border/30 bg-muted/20 flex items-center gap-2.5">
+                  <div className="p-1.5 rounded-md bg-emerald-500/10"><Zap className="h-3.5 w-3.5 text-emerald-400" /></div>
+                  <h3 className="text-sm font-bold">Operations & Infra</h3>
+                </div>
+                <div className="p-5 grid grid-cols-2 gap-4">
+                  {[
+                    { key: 'server', label: 'Server', type: 'text' },
+                    { key: 'botExecutionUserId', label: 'Execution User ID', type: 'text' },
+                    { key: 'botAssociated', label: 'Bot Associated', type: 'text' },
+                    { key: 'botFrequency', label: 'Bot Frequency', type: 'text' },
+                    { key: 'startDate', label: 'Start Date', type: 'text' },
+                    { key: 'cabDate', label: 'CAB Date', type: 'text' },
+                  ].map(f => (
+                    <div key={f.key}>
+                      <label className="text-xs text-muted-foreground mb-1 block font-medium">{f.label}</label>
+                      <input type={f.type} value={editFields[f.key] || ''} onChange={e => setEditFields(p => ({ ...p, [f.key]: e.target.value }))}
+                        disabled={userRole === 'VIEWER'}
+                        className="w-full px-3 py-2 bg-background border border-border/50 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all disabled:opacity-60" />
+                    </div>
+                  ))}
+                  <div className="col-span-2">
+                    <label className="text-xs text-muted-foreground mb-1 block font-medium">Efforts (Days)</label>
+                    <input type="number" value={editFields['effortsInDays'] || ''} onChange={e => setEditFields(p => ({ ...p, effortsInDays: Number(e.target.value) }))}
+                      disabled={userRole === 'VIEWER'}
+                      className="w-full px-3 py-2 bg-background border border-border/50 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all disabled:opacity-60" />
+                  </div>
                 </div>
               </div>
 
+              {/* Next Steps */}
+              <div className="rounded-2xl border border-border/50 bg-card/80 backdrop-blur overflow-hidden">
+                <div className="px-5 py-3.5 border-b border-border/30 bg-muted/20 flex items-center gap-2.5">
+                  <div className="p-1.5 rounded-md bg-pink-500/10"><BarChart3 className="h-3.5 w-3.5 text-pink-400" /></div>
+                  <h3 className="text-sm font-bold">Next Steps</h3>
+                </div>
+                <div className="p-5">
+                  <textarea value={editFields['nextSteps'] || ''} onChange={e => setEditFields(p => ({ ...p, nextSteps: e.target.value }))}
+                    disabled={userRole === 'VIEWER'}
+                    rows={3} placeholder="Outline the next steps for this bot..."
+                    className="w-full px-3 py-2 bg-background border border-border/50 rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all disabled:opacity-60 placeholder:text-muted-foreground/50" />
+                </div>
+              </div>
+
+              {/* Save Button */}
               {userRole !== 'VIEWER' && (
                 <button onClick={() => saveBot(editFields)} disabled={saving}
-                  className="w-full py-2.5 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-50 transition-all flex items-center justify-center gap-2">
-                  <Save className="h-4 w-4" /> {saving ? 'Saving...' : 'Save Changes'}
+                  className="w-full py-3 bg-primary text-primary-foreground rounded-xl text-sm font-semibold hover:bg-primary/90 disabled:opacity-50 transition-all flex items-center justify-center gap-2 shadow-lg shadow-primary/20">
+                  <Save className="h-4 w-4" /> {saving ? 'Saving...' : 'Save All Changes'}
                 </button>
               )}
             </div>
@@ -870,7 +1169,15 @@ export default function BotDetailPage() {
                     No process steps added yet. Add steps above to document the bot&apos;s workflow.
                   </div>
                 ) : bot.steps.map((step: any, i: number) => (
-                  <div key={step.id} className="flex items-center gap-3 rounded-xl border border-border/50 bg-card/80 p-3 group hover:border-border transition-colors">
+                  <div key={step.id} 
+                    draggable={userRole !== 'VIEWER'}
+                    onDragStart={(e) => handleStepDragStart(e, i)}
+                    onDragOver={handleStepDragOver}
+                    onDrop={(e) => handleStepDrop(e, i)}
+                    className={`flex items-center gap-3 rounded-xl border border-border/50 bg-card/80 p-3 group hover:border-border transition-colors ${
+                      userRole !== 'VIEWER' ? 'cursor-grab active:cursor-grabbing' : ''
+                    }`}
+                  >
                     <span className="text-xs font-mono text-muted-foreground w-6 text-center">{i + 1}</span>
                     <span className="px-2 py-0.5 bg-primary/10 text-primary text-xs font-medium rounded-md whitespace-nowrap">
                       {step.actionType.replace(/_/g, ' ')}
@@ -896,7 +1203,15 @@ export default function BotDetailPage() {
                   return (
                     <div key={step.id} className="flex items-center gap-6 flex-shrink-0 animate-fade-in">
                       {/* Step Card */}
-                      <div className="relative w-64 p-5 rounded-xl border border-border/50 bg-card/90 shadow-md hover:border-primary/40 hover:shadow-lg hover:shadow-primary/5 transition-all group flex flex-col gap-2.5">
+                      <div 
+                        draggable={userRole !== 'VIEWER'}
+                        onDragStart={(e) => handleStepDragStart(e, i)}
+                        onDragOver={handleStepDragOver}
+                        onDrop={(e) => handleStepDrop(e, i)}
+                        className={`relative w-64 p-5 rounded-xl border border-border/50 bg-card/90 shadow-md hover:border-primary/40 hover:shadow-lg hover:shadow-primary/5 transition-all group flex flex-col gap-2.5 ${
+                          userRole !== 'VIEWER' ? 'cursor-grab active:cursor-grabbing' : ''
+                        }`}
+                      >
                         <div className="absolute -top-3 -left-3 w-7 h-7 flex items-center justify-center rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-bold font-mono">
                           {i + 1}
                         </div>
@@ -1272,7 +1587,7 @@ export default function BotDetailPage() {
                     if (userRole === 'VIEWER') return;
                     e.preventDefault();
                     e.currentTarget.classList.remove('bg-primary/5');
-                    const taskId = e.dataTransfer.getData('taskId');
+                    const taskId = e.dataTransfer.getData('text/plain');
                     if (taskId) updateRemediationStatus(taskId, columnStatus);
                   }}
                 >
@@ -1287,19 +1602,31 @@ export default function BotDetailPage() {
                       <div 
                         key={t.id} 
                         draggable={userRole !== 'VIEWER'}
-                        onDragStart={(e) => { e.dataTransfer.setData('taskId', t.id); }}
+                        onDragStart={(e) => { e.dataTransfer.setData('text/plain', t.id); }}
                         className="bg-card border border-border/50 rounded-lg p-3 shadow-sm hover:border-primary/50 cursor-grab active:cursor-grabbing group relative"
                       >
-                        <div className="flex justify-between items-start mb-2">
+                        <div className="flex justify-between items-center mb-2">
                           <span className={`text-[10px] px-1.5 py-0.5 rounded-sm font-semibold uppercase tracking-wider ${
                             t.priority === 'CRITICAL' ? 'bg-red-500/15 text-red-400' :
                             t.priority === 'HIGH' ? 'bg-orange-500/15 text-orange-400' :
                             t.priority === 'MEDIUM' ? 'bg-blue-500/15 text-blue-400' : 'bg-slate-500/15 text-slate-400'
                           }`}>{t.priority}</span>
                           {userRole !== 'VIEWER' && (
-                            <button onClick={() => deleteRemediation(t.id)} className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-destructive/10 text-destructive/60 hover:text-destructive transition-all">
-                              <X className="h-3 w-3" />
-                            </button>
+                            <div className="flex items-center gap-1.5">
+                              <select 
+                                value={t.status}
+                                onChange={(e) => updateRemediationStatus(t.id, e.target.value)}
+                                className="text-[10px] bg-background border border-border/50 rounded-md px-1 py-0.5 text-foreground cursor-pointer focus:outline-none focus:ring-1 focus:ring-primary/50"
+                              >
+                                <option value="OPEN">Open</option>
+                                <option value="IN_PROGRESS">In Progress</option>
+                                <option value="BLOCKED">Blocked</option>
+                                <option value="CLOSED">Closed</option>
+                              </select>
+                              <button onClick={() => deleteRemediation(t.id)} className="p-0.5 rounded hover:bg-destructive/10 text-destructive/60 hover:text-destructive transition-all">
+                                <X className="h-3 w-3" />
+                              </button>
+                            </div>
                           )}
                         </div>
                         <p className="text-sm text-foreground mb-2 leading-tight">{t.title}</p>
@@ -1362,32 +1689,143 @@ export default function BotDetailPage() {
 
       {/* ── AUDIT HISTORY ───────────────────────────────────────────── */}
       {!loading && (
-        <div className="mt-8 rounded-xl border border-border/50 bg-card/80 p-5">
-          <h3 className="text-sm font-semibold mb-4">Audit History</h3>
-          <div className="space-y-3 max-h-64 overflow-y-auto pr-2">
-            {auditLogs.length === 0 ? (
-              <p className="text-xs text-muted-foreground">No audit logs found.</p>
-            ) : (
-              auditLogs.map((log: any) => (
-                <div key={log.id} className="flex justify-between items-start border-b border-border/30 pb-2">
-                  <div>
-                    <p className="text-xs font-medium text-foreground">{log.action}</p>
-                    <p className="text-[10px] text-muted-foreground mt-0.5">
-                      {log.field && <span className="mr-2">Field: <span className="font-mono">{log.field}</span></span>}
-                      {log.oldValue && <span className="mr-2">From: <span className="font-mono">{log.oldValue}</span></span>}
-                      {log.newValue && <span>To: <span className="font-mono">{log.newValue}</span></span>}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-[10px] text-muted-foreground">{new Date(log.timestamp).toLocaleString()}</p>
-                    {log.userId && <p className="text-[10px] text-muted-foreground mt-0.5">By {log.userId}</p>}
-                  </div>
-                </div>
-              ))
+        <div className="mt-8 rounded-2xl border border-border/50 bg-card/80 backdrop-blur overflow-hidden">
+          <div className="px-6 py-4 border-b border-border/30 bg-muted/20 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-slate-500/10"><Clock className="h-4 w-4 text-slate-400" /></div>
+              <h3 className="text-sm font-bold tracking-wide">Audit History</h3>
+            </div>
+            {auditLogs.length > 0 && (
+              <span className="text-[10px] text-muted-foreground bg-muted/50 px-2 py-1 rounded-full font-medium">{auditLogs.length} events</span>
             )}
+          </div>
+          <div className="p-6">
+            <div className="space-y-0 max-h-72 overflow-y-auto pr-2">
+              {auditLogs.length === 0 ? (
+                <div className="text-center py-8">
+                  <Clock className="h-8 w-8 text-muted-foreground/30 mx-auto mb-2" />
+                  <p className="text-sm text-muted-foreground">No audit logs found.</p>
+                </div>
+              ) : (
+                auditLogs.map((log: any, i: number) => (
+                  <div key={log.id} className="relative flex gap-4 pb-4 last:pb-0">
+                    {/* Timeline line */}
+                    {i < auditLogs.length - 1 && (
+                      <div className="absolute left-[11px] top-6 bottom-0 w-px bg-border/50" />
+                    )}
+                    {/* Timeline dot */}
+                    <div className="relative flex-shrink-0 mt-1">
+                      <div className="w-[22px] h-[22px] rounded-full bg-muted/50 border-2 border-border/50 flex items-center justify-center">
+                        <div className="w-2 h-2 rounded-full bg-primary/50" />
+                      </div>
+                    </div>
+                    {/* Content */}
+                    <div className="flex-1 min-w-0 pb-4 border-b border-border/20 last:border-0">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <p className="text-xs font-semibold text-foreground">{log.action}</p>
+                          <p className="text-[10px] text-muted-foreground mt-0.5 space-x-2">
+                            {log.field && <span>Field: <span className="font-mono text-foreground/70 bg-muted/50 px-1 rounded">{log.field}</span></span>}
+                            {log.oldValue && <span>From: <span className="font-mono text-red-400/70 line-through">{log.oldValue}</span></span>}
+                            {log.newValue && <span>→ <span className="font-mono text-green-400/70">{log.newValue}</span></span>}
+                          </p>
+                        </div>
+                        <div className="text-right flex-shrink-0">
+                          <p className="text-[10px] text-muted-foreground">{new Date(log.timestamp).toLocaleString()}</p>
+                          {log.userId && <p className="text-[10px] text-primary/70 font-medium mt-0.5">{log.userId}</p>}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
           </div>
         </div>
       )}
+
+      <AlertDialog open={cloneConfirmOpen} onOpenChange={setCloneConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure you want to clone this bot?</AlertDialogTitle>
+            <AlertDialogDescription>
+              All process steps, dependencies, and checklist items will be copied to the new bot. 
+              The new bot will have the suffix '-CLONE'.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmClone} className="bg-primary hover:bg-primary/90">Clone Bot</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Generic Delete Confirmation */}
+      <AlertDialog open={deleteConfirm !== null} onOpenChange={(open) => !open && setDeleteConfirm(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this {deleteConfirm?.label}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. This {deleteConfirm?.label} will be permanently removed.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmGenericDelete} className="bg-red-500 hover:bg-red-600">Delete</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Checklist NO → Finding Suggestion Dialog */}
+      <AlertDialog open={checklistFindingSuggestion !== null} onOpenChange={(open) => !open && setChecklistFindingSuggestion(null)}>
+        <AlertDialogContent className="max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-amber-500 font-bold">
+              <AlertTriangle className="h-5 w-5" />
+              Create Finding for Checklist Issue?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-3">
+              <p className="text-sm text-foreground/90">You have marked this checklist item as <strong className="text-red-400 font-semibold">NO</strong>. Would you like to automatically record a corresponding audit finding?</p>
+              <div className="bg-muted/30 p-3.5 rounded-xl border border-border/50 text-xs space-y-1.5 text-left">
+                <p><span className="font-semibold text-muted-foreground">Category:</span> <span className="font-mono text-foreground/80">{checklistFindingSuggestion?.category}</span></p>
+                <p><span className="font-semibold text-muted-foreground">Priority:</span> <span className="font-mono text-amber-500 font-bold">{checklistFindingSuggestion?.priority}</span></p>
+                <p className="mt-1 font-medium text-foreground bg-card/50 p-2 rounded-lg border border-border/30">&ldquo;{checklistFindingSuggestion?.observation}&rdquo;</p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Dismiss</AlertDialogCancel>
+            <AlertDialogAction onClick={createFindingFromChecklist} className="bg-primary hover:bg-primary/90 text-primary-foreground">
+              Create Finding
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* High/Critical Finding → Remediation Task Suggestion Dialog */}
+      <AlertDialog open={findingTaskSuggestion !== null} onOpenChange={(open) => !open && setFindingTaskSuggestion(null)}>
+        <AlertDialogContent className="max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-primary font-bold">
+              <Plus className="h-5 w-5" />
+              Link Remediation Task?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-3">
+              <p className="text-sm text-foreground/90">Since this finding is marked as <strong className="text-red-400 font-semibold">{findingTaskSuggestion?.priority}</strong> priority, would you like to automatically create a linked Remediation Task to track the resolution?</p>
+              <div className="bg-muted/30 p-3.5 rounded-xl border border-border/50 text-xs space-y-1.5 text-left">
+                <p><span className="font-semibold text-muted-foreground">Task Title:</span> <span className="text-foreground/80 font-medium">{findingTaskSuggestion?.title}</span></p>
+                <p><span className="font-semibold text-muted-foreground">Priority:</span> <span className="font-mono text-primary font-bold">{findingTaskSuggestion?.priority}</span></p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Dismiss</AlertDialogCancel>
+            <AlertDialogAction onClick={createRemediationFromFinding} className="bg-primary hover:bg-primary/90 text-primary-foreground">
+              Create Task
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
     </div>
   );

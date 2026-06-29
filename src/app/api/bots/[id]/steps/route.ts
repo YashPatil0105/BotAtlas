@@ -114,6 +114,19 @@ export async function PUT(
   try {
     const { id } = await params;
     const body = await request.json();
+
+    if (Array.isArray(body)) {
+      // Bulk update stepOrder
+      const updates = body.map(item => {
+        return prisma.botStep.update({
+          where: { id: item.id, botId: id },
+          data: { stepOrder: item.stepOrder },
+        });
+      });
+      await prisma.$transaction(updates);
+      return NextResponse.json({ success: true, message: "Step order updated" });
+    }
+
     const { stepId, ...updateData } = body;
 
     if (!stepId) {

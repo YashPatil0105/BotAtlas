@@ -1,17 +1,18 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useToast } from '@/components/ui/use-toast';
-import { ArrowLeft, RefreshCw, GitCompare, GitBranch } from 'lucide-react';
+import { ArrowLeft, RefreshCw, GitCompare } from 'lucide-react';
 
-export default function CompareBotsPage() {
+function CompareBotsContent() {
   const router = useRouter();
   const { toast } = useToast();
+  const searchParams = useSearchParams();
   
   const [bots, setBots] = useState<any[]>([]);
-  const [sourceId, setSourceId] = useState('');
-  const [targetId, setTargetId] = useState('');
+  const [sourceId, setSourceId] = useState(searchParams.get('sourceId') || '');
+  const [targetId, setTargetId] = useState(searchParams.get('targetId') || '');
   
   const [loading, setLoading] = useState(false);
   const [comparison, setComparison] = useState<any>(null);
@@ -20,19 +21,16 @@ export default function CompareBotsPage() {
     fetch('/api/bots').then(r => r.json()).then(data => setBots(data.bots || []));
   }, []);
 
-  const handleCompare = async () => {
-    if (!sourceId || !targetId) {
-      toast({ title: 'Select bots', description: 'Please select both bots to compare', variant: 'destructive' });
-      return;
-    }
-    if (sourceId === targetId) {
+  const triggerCompare = async (src: string, tgt: string) => {
+    if (!src || !tgt) return;
+    if (src === tgt) {
       toast({ title: 'Invalid Selection', description: 'Please select two different bots', variant: 'destructive' });
       return;
     }
     
     setLoading(true);
     try {
-      const res = await fetch(`/api/bots/compare?sourceId=${sourceId}&targetId=${targetId}`);
+      const res = await fetch(`/api/bots/compare?sourceId=${src}&targetId=${tgt}`);
       if (res.ok) {
         setComparison(await res.json());
       } else {
@@ -43,6 +41,16 @@ export default function CompareBotsPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  useEffect(() => {
+    if (sourceId && targetId) {
+      triggerCompare(sourceId, targetId);
+    }
+  }, [sourceId, targetId]);
+
+  const handleCompare = () => {
+    triggerCompare(sourceId, targetId);
   };
 
   return (
@@ -145,5 +153,13 @@ export default function CompareBotsPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function CompareBotsPage() {
+  return (
+    <Suspense fallback={<div className="p-6 text-center text-muted-foreground animate-pulse">Loading comparison...</div>}>
+      <CompareBotsContent />
+    </Suspense>
   );
 }

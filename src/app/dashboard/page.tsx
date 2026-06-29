@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useSession } from 'next-auth/react';
 import {
   Bot, AlertTriangle, CheckCircle2, Clock, XCircle,
   FileWarning, Users, ShieldAlert, TrendingUp, Activity
@@ -99,15 +100,21 @@ function MiniTable({ title, items, emptyText }: { title: string; items: { label:
 }
 
 export default function DashboardPage() {
+  const { data: session } = useSession();
+  const userRole = (session?.user as any)?.role || 'VIEWER';
+
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [scope, setScope] = useState<'all' | 'my'>('all');
 
   useEffect(() => {
-    fetch('/api/dashboard/stats')
+    setLoading(true);
+    const query = scope === 'my' ? '?scope=my' : '';
+    fetch(`/api/dashboard/stats${query}`)
       .then(r => r.json())
       .then(data => { setStats(data); setLoading(false); })
       .catch(() => setLoading(false));
-  }, []);
+  }, [scope]);
 
   if (loading) {
     return (
@@ -159,9 +166,35 @@ export default function DashboardPage() {
     label: v.vendor || 'Unknown',
     value: v.count
   }));
-
   return (
     <div className="space-y-6 animate-fade-in">
+      {/* Scope Toggles for Admins */}
+      {userRole === 'ADMIN' && (
+        <div className="flex justify-end">
+          <div className="inline-flex rounded-xl bg-card border border-border/50 p-1 shadow-sm">
+            <button
+              onClick={() => setScope('all')}
+              className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                scope === 'all'
+                  ? 'bg-primary text-primary-foreground shadow'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              All Registry Bots
+            </button>
+            <button
+              onClick={() => setScope('my')}
+              className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                scope === 'my'
+                  ? 'bg-primary text-primary-foreground shadow'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              My Assignments
+            </button>
+          </div>
+        </div>
+      )}
       {/* KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard icon={Bot} label="Total Bots" value={stats.totalBots} color="#3b82f6" subtext="In registry" />
