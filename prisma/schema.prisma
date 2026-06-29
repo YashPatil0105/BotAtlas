@@ -199,6 +199,8 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
+  botAssignments BotAssignment[]
+
   @@map("users")
 }
 
@@ -226,16 +228,38 @@ model Bot {
   createdBy           String?
   updatedBy           String?
 
-  steps              BotStep[]
-  dependencies       Dependency[]
-  findings           Finding[]
+  // Fields from Bot Registry
+  srNo                Int?
+  projectName         String?
+  partner             String?
+  departmentSpoc      String?
+  vendorSpoc          String?
+  unitySpoc           String?
+  startDate           DateTime?
+  cabDate             DateTime?
+  nextSteps           String?
+  effortsInDays       Float?
+  roi                 String?
+  oldBotsNewBots      String?
+  vendorPaymentStatus String?
+  botAssociated       String?
+  botFrequency        String?
+  processId           String?
+  server              String?
+  botExecutionUserId  String?
+  docsLinks           String?
+
+  steps                BotStep[]
+  dependencies         Dependency[]
+  findings             Finding[]
   rootCauseAssessments RootCauseAssessment[]
-  remediationTasks   RemediationTask[]
-  evidences          Evidence[]
-  checklist          BotChecklist[]
-  sourceSimilarities BotSimilarity[]      @relation("SourceBot")
-  targetSimilarities BotSimilarity[]      @relation("TargetBot")
-  sourceComponents   Component[]
+  remediationTasks     RemediationTask[]
+  evidences            Evidence[]
+  checklist            BotChecklist[]
+  sourceSimilarities   BotSimilarity[]       @relation("SourceBot")
+  targetSimilarities   BotSimilarity[]       @relation("TargetBot")
+  sourceComponents     Component[]
+  botAssignments       BotAssignment[]
 
   @@index([botCode])
   @@index([currentStatus])
@@ -248,11 +272,11 @@ model Bot {
 }
 
 model BotStep {
-  id                 String      @id @default(cuid())
+  id                 String     @id @default(cuid())
   botId              String
   stepOrder          Int
   moduleName         String?
-  actionType         ActionType  @default(OTHER)
+  actionType         ActionType @default(OTHER)
   systemName         String?
   systemType         String?
   inputType          String?
@@ -264,13 +288,13 @@ model BotStep {
   canonicalSignature String?
   exactHash          String?
   tags               String[]
-  reusableCandidate  Boolean     @default(false)
+  reusableCandidate  Boolean    @default(false)
   notes              String?
-  createdAt          DateTime    @default(now())
-  updatedAt          DateTime    @updatedAt
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
 
-  bot                Bot         @relation(fields: [botId], references: [id], onDelete: Cascade)
-  componentMaps      StepComponentMap[]
+  bot           Bot                @relation(fields: [botId], references: [id], onDelete: Cascade)
+  componentMaps StepComponentMap[]
 
   @@index([botId])
   @@index([actionType])
@@ -299,8 +323,8 @@ model Component {
   createdAt          DateTime        @default(now())
   updatedAt          DateTime        @updatedAt
 
-  sourceBot          Bot?            @relation(fields: [sourceBotId], references: [id])
-  stepMaps           StepComponentMap[]
+  sourceBot Bot?               @relation(fields: [sourceBotId], references: [id])
+  stepMaps  StepComponentMap[]
 
   @@index([componentCode])
   @@index([canonicalSignature])
@@ -308,17 +332,17 @@ model Component {
 }
 
 model StepComponentMap {
-  id               String           @id @default(cuid())
+  id               String            @id @default(cuid())
   stepId           String
   componentId      String
-  confidenceScore  Float            @default(0)
-  matchType        MatchType        @default(MANUAL)
+  confidenceScore  Float             @default(0)
+  matchType        MatchType         @default(MANUAL)
   reviewerDecision ReviewerDecision?
   notes            String?
-  createdAt        DateTime         @default(now())
+  createdAt        DateTime          @default(now())
 
-  step             BotStep          @relation(fields: [stepId], references: [id], onDelete: Cascade)
-  component        Component        @relation(fields: [componentId], references: [id], onDelete: Cascade)
+  step      BotStep   @relation(fields: [stepId], references: [id], onDelete: Cascade)
+  component Component @relation(fields: [componentId], references: [id], onDelete: Cascade)
 
   @@map("step_component_maps")
 }
@@ -335,7 +359,7 @@ model Dependency {
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
 
-  bot             Bot            @relation(fields: [botId], references: [id], onDelete: Cascade)
+  bot Bot @relation(fields: [botId], references: [id], onDelete: Cascade)
 
   @@index([botId])
   @@index([dependencyType])
@@ -343,23 +367,23 @@ model Dependency {
 }
 
 model Finding {
-  id              String          @id @default(cuid())
-  botId           String
-  category        FindingCategory
-  observation     String
-  evidence        String?
-  impact          String?
-  recommendation  String?
-  priority        Criticality     @default(MEDIUM)
-  status          FindingStatus   @default(OPEN)
-  owner           String?
-  dueDate         DateTime?
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
+  id             String          @id @default(cuid())
+  botId          String
+  category       FindingCategory
+  observation    String
+  evidence       String?
+  impact         String?
+  recommendation String?
+  priority       Criticality     @default(MEDIUM)
+  status         FindingStatus   @default(OPEN)
+  owner          String?
+  dueDate        DateTime?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
 
-  bot             Bot             @relation(fields: [botId], references: [id], onDelete: Cascade)
+  bot              Bot               @relation(fields: [botId], references: [id], onDelete: Cascade)
   remediationTasks RemediationTask[]
-  evidenceFiles   Evidence[]
+  evidenceFiles    Evidence[]
 
   @@index([botId])
   @@index([category])
@@ -382,7 +406,7 @@ model RootCauseAssessment {
   createdAt          DateTime          @default(now())
   updatedAt          DateTime          @updatedAt
 
-  bot                Bot               @relation(fields: [botId], references: [id], onDelete: Cascade)
+  bot Bot @relation(fields: [botId], references: [id], onDelete: Cascade)
 
   @@index([botId])
   @@index([category])
@@ -403,8 +427,8 @@ model RemediationTask {
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
 
-  bot             Bot         @relation(fields: [botId], references: [id], onDelete: Cascade)
-  finding         Finding?    @relation(fields: [findingId], references: [id])
+  bot     Bot      @relation(fields: [botId], references: [id], onDelete: Cascade)
+  finding Finding? @relation(fields: [findingId], references: [id])
 
   @@index([botId])
   @@index([status])
@@ -422,45 +446,45 @@ model Evidence {
   uploadedBy         String?
   classificationNote String?
 
-  bot                Bot          @relation(fields: [botId], references: [id], onDelete: Cascade)
-  finding            Finding?     @relation(fields: [findingId], references: [id])
+  bot     Bot      @relation(fields: [botId], references: [id], onDelete: Cascade)
+  finding Finding? @relation(fields: [findingId], references: [id])
 
   @@index([botId])
   @@map("evidences")
 }
 
 model FailurePattern {
-  id                String   @id @default(cuid())
+  id                String            @id @default(cuid())
   name              String
   category          RootCauseCategory
   symptoms          String
   likelyCause       String
   recommendedFix    String
-  affectedBotsCount Int      @default(0)
+  affectedBotsCount Int               @default(0)
   tags              String[]
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
 
   @@map("failure_patterns")
 }
 
 model BotSimilarity {
-  id               String  @id @default(cuid())
+  id               String   @id @default(cuid())
   sourceBotId      String
   targetBotId      String
-  exactScore       Float   @default(0)
-  canonicalScore   Float   @default(0)
-  sequenceScore    Float   @default(0)
-  fuzzyScore       Float   @default(0)
+  exactScore       Float    @default(0)
+  canonicalScore   Float    @default(0)
+  sequenceScore    Float    @default(0)
+  fuzzyScore       Float    @default(0)
   semanticScore    Float?
-  finalScore       Float   @default(0)
+  finalScore       Float    @default(0)
   matchExplanation String?
   reviewerDecision String?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
-  sourceBot        Bot     @relation("SourceBot", fields: [sourceBotId], references: [id], onDelete: Cascade)
-  targetBot        Bot     @relation("TargetBot", fields: [targetBotId], references: [id], onDelete: Cascade)
+  sourceBot Bot @relation("SourceBot", fields: [sourceBotId], references: [id], onDelete: Cascade)
+  targetBot Bot @relation("TargetBot", fields: [targetBotId], references: [id], onDelete: Cascade)
 
   @@unique([sourceBotId, targetBotId])
   @@map("bot_similarities")
@@ -477,7 +501,7 @@ model BotChecklist {
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
 
-  bot           Bot            @relation(fields: [botId], references: [id], onDelete: Cascade)
+  bot Bot @relation(fields: [botId], references: [id], onDelete: Cascade)
 
   @@unique([botId, checklistItem])
   @@index([botId])
@@ -498,4 +522,19 @@ model AuditLog {
   @@index([entityType, entityId])
   @@index([timestamp])
   @@map("audit_logs")
+}
+
+model BotAssignment {
+  id         String   @id @default(cuid())
+  userId     String
+  botId      String
+  assignedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bot  Bot  @relation(fields: [botId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, botId])
+  @@index([userId])
+  @@index([botId])
+  @@map("bot_assignments")
 }

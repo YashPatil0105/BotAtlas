@@ -838,6 +838,18 @@ async function main() {
   });
   console.log(`  ✅ ${bot10.botCode}: ${bot10.name}`);
 
+  // ─── BOT ASSIGNMENTS ───────────────────────────────
+  console.log('\n🔗 Assigning bots to reviewer users...');
+  await prisma.botAssignment.createMany({
+    data: [
+      { userId: reviewerUser.id, botId: bot1.id },
+      { userId: reviewerUser.id, botId: bot3.id },
+      { userId: reviewerUser.id, botId: bot5.id },
+      { userId: reviewerUser.id, botId: bot7.id },
+      { userId: reviewerUser.id, botId: bot10.id },
+    ],
+  });
+
   // ─── SUMMARY ───────────────────────────────────────
 
   const totalBots = await prisma.bot.count();

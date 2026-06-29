@@ -155,100 +155,6 @@ For each line:
 
 ---
 
-## Feature A3 — Power Platform REST API Live Sync
-
-### What This Enables
-Instead of exporting and uploading, BotAtlas connects **directly to the Power Platform environment** and pulls flow data automatically.
-
-### How It Works
-```
-1. Admin inputs Power Platform tenant ID + environment ID + service principal credentials
-2. BotAtlas calls: GET https://api.powerautomate.com/providers/Microsoft.ProcessSimple/
-                          environments/{env}/flows?api-version=2016-11-01
-3. Gets list of all PAD flows with metadata
-4. For each flow: GET /flows/{flowId}/versions/latest  → full definition JSON
-5. Parse and create/update bot records
-6. Run on schedule (daily sync) or on-demand
-```
-
-### What the API Returns
-- Flow name, description, created/modified dates
-- Trigger type (scheduled, manual, automated)
-- Last run time → `bot.lastKnownRunAt`
-- Run history → failure detection → `bot.currentStatus: FAILED`
-- Full action definition (same as flow.json in zip)
-- Creator → `bot.technicalOwner`
-
-### Implementation
-**New Settings Page:** `/dashboard/admin/integrations`  
-```
-[ Power Platform Integration ]
-Tenant ID: _________________
-Environment ID: _____________
-Client ID: _________________
-Client Secret: _______________ (stored encrypted)
-[Test Connection] [Save] [Sync Now]
-Auto-sync: Daily at 2:00 AM [✓]
-```
-
-**New API Route:** `POST /api/integrations/power-platform/sync`  
-**New Schema Fields:**
-```prisma
-model Bot {
-  // ... existing fields
-  externalId        String?    // Power Platform flow ID
-  externalSource    String?    // "POWER_PLATFORM", "UIPATH", "BLUE_PRISM"
-  lastSyncedAt      DateTime?
-  syncStatus        String?    // "SYNCED", "DRIFT_DETECTED", "ERROR"
-}
-```
-
-**Drift Detection:** If a flow is updated in Power Platform after it was reviewed in BotAtlas, flag it as `DRIFT_DETECTED` → trigger re-review workflow.
-
----
-
-## Feature A4 — BRD / SOP Document Auto-Parser
-
-### Problem
-Most bots were built from a BRD (Business Requirements Document) or SOP. These documents describe the process in plain English — which is exactly what `BotStep.description` needs.
-
-### Implementation Options
-
-#### Option A: Word Document (.docx) Parser
-Parse numbered lists and tables from `.docx` files:
-```
-Input (from BRD):
-"Step 1: Login to NPCI portal using service account credentials
- Step 2: Navigate to Reports > Daily Reconciliation
- Step 3: Download the T-1 reconciliation file (XLSX format)
- Step 4: Validate file: check row count > 0 and date matches T-1"
-
-Output:
-Step 1 → actionType: PORTAL_LOGIN, description: "Login to NPCI portal", systemName: "NPCI Portal"
-Step 2 → actionType: BROWSER_NAVIGATION, description: "Navigate to Reports > Daily Reconciliation"
-Step 3 → actionType: FILE_DOWNLOAD, description: "Download T-1 reconciliation file"
-Step 4 → actionType: FILE_VALIDATION, description: "Validate file row count and date"
-```
-
-**Library:** `mammoth` (converts .docx to plain text, tiny, no native deps)
-
-#### Option B: AI-Powered Extraction (with any LLM API)
-Send the document text to an LLM with a structured prompt:
-```
-Prompt: "Extract the process steps from this BRD as JSON array with fields:
-stepOrder, description, actionType (from: PORTAL_LOGIN, BROWSER_NAVIGATION, 
-FILE_DOWNLOAD, ...), systemName, inputType, outputType"
-
-BRD text: [pasted or uploaded content]
-```
-
-Returns a ready-to-import JSON that user reviews before committing.
-
-**Supported inputs:** `.docx`, `.pdf` (via `pdf-parse`), plain text paste
-
----
-
-## Feature A5 — AI Natural Language Bot Intake
 
 ### "Describe Your Bot" → Structured Record
 
@@ -308,7 +214,7 @@ The current import is basic. This enhancement adds:
 
 ---
 
-## Feature A7 — UiPath / Blue Prism / Automation Anywhere Parsers
+
 
 ### UiPath (.xaml / Package)
 UiPath exports packages as `.nupkg` (which is a zip) containing `.xaml` files.  
@@ -462,35 +368,7 @@ This creates an **automatic changelog** and resets the review status — ensurin
 
 ---
 
-## Feature A12 — Email-Based Bot Intake
 
-### For Non-Technical Team Members
-Operations team members who manage bots but don't use the UI can submit via email:
-
-```
-To: botatlas-intake@yourorg.com
-Subject: [NEW BOT] NPCI Daily Reconciliation
-
-Bot Name: NPCI Daily Reconciliation
-Department: Treasury Operations  
-Owner: Priya Sharma
-Vendor: TCS
-Technology: PAD
-Criticality: HIGH
-Description: Downloads daily reconciliation file from NPCI portal,
-             validates data, uploads to bank SFTP, sends notification.
-
-[Attachment: NPCI_Recon.zip]  ← optional PAD export
-```
-
-BotAtlas polls the mailbox (via IMAP or Microsoft Graph API), parses the email, and:
-1. Creates the bot record from email body fields
-2. If ZIP attached → runs PAD parser
-3. Sends confirmation reply with the new BOT code
-
----
-
-## Feature A13 — Chrome Extension / Browser Companion
 
 ### For Bots That Involve Web Portals
 A lightweight Chrome extension that:

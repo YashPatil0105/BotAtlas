@@ -41,6 +41,23 @@ const REVIEW_COLORS: Record<string, string> = {
   AWAITING_VALIDATION: '#f59e0b',
 };
 
+const CustomTooltip = ({ active, payload }: any) => {
+  if (active && payload && payload.length) {
+    const data = payload[0];
+    return (
+      <div className="bg-popover/90 backdrop-blur-md border border-border px-3 py-2 rounded-lg shadow-xl text-xs">
+        <span className="font-semibold text-foreground block">
+          {data.name || data.payload?.name}
+        </span>
+        <span className="text-muted-foreground mt-0.5 block">
+          Value: <span className="font-mono text-foreground font-semibold">{data.value}</span>
+        </span>
+      </div>
+    );
+  }
+  return null;
+};
+
 function StatCard({ icon: Icon, label, value, color, subtext }: {
   icon: any; label: string; value: number | string; color: string; subtext?: string;
 }) {
@@ -94,10 +111,25 @@ export default function DashboardPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="flex flex-col items-center gap-3">
-          <div className="h-8 w-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-          <p className="text-sm text-muted-foreground">Loading dashboard...</p>
+      <div className="space-y-6 animate-pulse">
+        {/* KPI Cards Skeleton */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="rounded-xl border border-border/50 bg-card/80 p-5 h-[104px]" />
+          ))}
+        </div>
+
+        {/* Charts Row Skeleton */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="rounded-xl border border-border/50 bg-card/80 p-5 h-[322px]" />
+          <div className="rounded-xl border border-border/50 bg-card/80 p-5 h-[322px]" />
+        </div>
+
+        {/* Info Tables Row Skeleton */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <div className="rounded-xl border border-border/50 bg-card/80 p-5 h-[200px]" />
+          <div className="rounded-xl border border-border/50 bg-card/80 p-5 h-[200px]" />
+          <div className="rounded-xl border border-border/50 bg-card/80 p-5 h-[200px]" />
         </div>
       </div>
     );
@@ -147,7 +179,7 @@ export default function DashboardPage() {
               <Pie data={statusData} cx="50%" cy="50%" innerRadius={55} outerRadius={90} paddingAngle={3} dataKey="value" stroke="none">
                 {statusData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
               </Pie>
-              <Tooltip contentStyle={{ background: '#1a1a2e', border: '1px solid #2a2a3e', borderRadius: '8px', color: '#fff' }} />
+              <Tooltip content={<CustomTooltip />} />
               <Legend wrapperStyle={{ fontSize: '12px' }} />
             </PieChart>
           </ResponsiveContainer>
@@ -160,7 +192,7 @@ export default function DashboardPage() {
               <CartesianGrid strokeDasharray="3 3" stroke="#2a2a3e" />
               <XAxis type="number" stroke="#666" fontSize={12} />
               <YAxis type="category" dataKey="name" stroke="#666" fontSize={11} width={110} />
-              <Tooltip contentStyle={{ background: '#1a1a2e', border: '1px solid #2a2a3e', borderRadius: '8px', color: '#fff' }} />
+              <Tooltip content={<CustomTooltip />} />
               <Bar dataKey="value" radius={[0, 6, 6, 0]}>
                 {reviewData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
               </Bar>

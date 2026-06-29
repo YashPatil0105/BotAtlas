@@ -1,14 +1,28 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/db";
+import { getSessionUser, getAssignedBotIds } from "@/lib/getSessionUser";
 
 export async function GET() {
   try {
+    const user = await getSessionUser();
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const assignedBotIds = await getAssignedBotIds(user);
+
+    // Build a where clause for bot-level queries
+    const botWhere: any = assignedBotIds !== null ? { id: { in: assignedBotIds } } : {};
+    // Build a where clause for finding-level queries (filter by botId)
+    const findingBotWhere: any = assignedBotIds !== null ? { botId: { in: assignedBotIds } } : {};
+
     // Total bots
-    const totalBots = await prisma.bot.count();
+    const totalBots = await prisma.bot.count({ where: botWhere });
 
     // Status counts
     const statusCountsRaw = await prisma.bot.groupBy({
       by: ["currentStatus"],
+      where: botWhere,
       _count: { _all: true },
     });
     const statusCounts: Record<string, number> = {};
@@ -19,6 +33,7 @@ export async function GET() {
     // Review status counts
     const reviewStatusCountsRaw = await prisma.bot.groupBy({
       by: ["reviewStatus"],
+      where: botWhere,
       _count: { _all: true },
     });
     const reviewStatusCounts: Record<string, number> = {};
@@ -29,6 +44,7 @@ export async function GET() {
     // Criticality counts
     const criticalityCountsRaw = await prisma.bot.groupBy({
       by: ["criticality"],
+      where: botWhere,
       _count: { _all: true },
     });
     const criticalityCounts: Record<string, number> = {};
@@ -39,7 +55,7 @@ export async function GET() {
     // Recommendation counts (only where finalRecommendation is set)
     const recommendationCountsRaw = await prisma.bot.groupBy({
       by: ["finalRecommendation"],
-      where: { finalRecommendation: { not: null } },
+      where: { ...botWhere, finalRecommendation: { not: null } },
       _count: { _all: true },
     });
     const recommendationCounts: Record<string, number> = {};
@@ -51,12 +67,13 @@ export async function GET() {
 
     // Open findings
     const openFindings = await prisma.finding.count({
-      where: { status: { not: "CLOSED" } },
+      where: { ...findingBotWhere, status: { not: "CLOSED" } },
     });
 
     // Critical findings (priority CRITICAL and not closed)
     const criticalFindings = await prisma.finding.count({
       where: {
+        ...findingBotWhere,
         priority: "CRITICAL",
         status: { not: "CLOSED" },
       },
@@ -65,6 +82,7 @@ export async function GET() {
     // Bots without owner
     const botsWithoutOwner = await prisma.bot.count({
       where: {
+        ...botWhere,
         OR: [
           { businessOwner: null },
           { businessOwner: "" },
@@ -73,16 +91,17 @@ export async function GET() {
     });
 
     // Bots without documentation
-    // Check where checklist item 'documentationAvailable' is not YES
     const botsWithDocs = await prisma.botChecklist.findMany({
       where: {
         checklistItem: "documentationAvailable",
         value: "YES",
+        ...(assignedBotIds !== null ? { botId: { in: assignedBotIds } } : {}),
       },
       select: { botId: true },
     });
     const botsWithDocsIds = new Set(botsWithDocs.map((c) => c.botId));
     const allBotIds = await prisma.bot.findMany({
+      where: botWhere,
       select: { id: true },
     });
     const botsWithoutDocs = allBotIds.filter(
@@ -92,6 +111,7 @@ export async function GET() {
     // Top root causes
     const topRootCausesRaw = await prisma.rootCauseAssessment.groupBy({
       by: ["category"],
+      where: findingBotWhere,
       _count: { _all: true },
       orderBy: { _count: { category: "desc" } },
       take: 5,
@@ -103,6 +123,7 @@ export async function GET() {
 
     // Top vendor findings
     const findingsWithVendor = await prisma.finding.findMany({
+      where: findingBotWhere,
       select: {
         bot: {
           select: { vendor: true },
@@ -121,6 +142,7 @@ export async function GET() {
 
     // Recent activity: last 10 updated bots
     const recentActivity = await prisma.bot.findMany({
+      where: botWhere,
       select: {
         id: true,
         name: true,

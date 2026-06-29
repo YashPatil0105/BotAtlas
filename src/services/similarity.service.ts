@@ -56,6 +56,12 @@ export function generateExactHash(text: string): string {
   return crypto.createHash('sha256').update(text).digest('hex');
 }
 
+// ─── SUBFLOW SIGNATURE ─────────────────────────────
+
+export function generateSubflowSignature(actionTypes: string[]): string {
+  return crypto.createHash('sha256').update(actionTypes.join('|')).digest('hex');
+}
+
 // ─── N-GRAM GENERATION ─────────────────────────────
 
 export function generateNgrams(actionTypes: string[], windowSize: number): string[] {

@@ -1,12 +1,17 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { usePathname } from 'next/navigation';
+import { useMemo, useState, useEffect, useRef } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import {
   Search,
   Bell,
   ChevronRight,
+  Bot,
+  AlertTriangle,
+  Puzzle,
+  Sun,
+  Moon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -62,10 +67,107 @@ function getPageInfo(pathname: string): { title: string; breadcrumbs: { label: s
 
 export function Header() {
   const pathname = usePathname();
+  const router = useRouter();
   const { data: session } = useSession();
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<any>(null);
+  const [showResults, setShowResults] = useState(false);
+  const searchRef = useRef<HTMLDivElement>(null);
+
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const notifRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  const [theme, setTheme] = useState<'light'|'dark'>('dark');
 
   const { title, breadcrumbs } = useMemo(() => getPageInfo(pathname), [pathname]);
+
+  useEffect(() => {
+    const saved = localStorage.getItem('theme');
+    if (saved === 'light') {
+      setTheme('light');
+      document.documentElement.classList.remove('dark');
+    }
+  }, []);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
+        setShowResults(false);
+      }
+      if (notifRef.current && !notifRef.current.contains(e.target as Node)) {
+        setShowNotifications(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!searchQuery.trim()) {
+      setSearchResults(null);
+      setShowResults(false);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/search?q=${encodeURIComponent(searchQuery)}`);
+        if (res.ok) {
+          const data = await res.json();
+          setSearchResults(data);
+          setShowResults(true);
+        }
+      } catch (e) {
+        console.error("Search failed:", e);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  const handleResultClick = (href: string) => {
+    setShowResults(false);
+    setSearchQuery('');
+    router.push(href);
+  };
+
+  const toggleNotifications = async () => {
+    if (!showNotifications) {
+      try {
+        const res = await fetch('/api/notifications');
+        if (res.ok) {
+          setNotifications(await res.json());
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    setShowNotifications(!showNotifications);
+  };
+
+  const toggleTheme = () => {
+    if (theme === 'dark') {
+      setTheme('light');
+      localStorage.setItem('theme', 'light');
+      document.documentElement.classList.remove('dark');
+    } else {
+      setTheme('dark');
+      localStorage.setItem('theme', 'dark');
+      document.documentElement.classList.add('dark');
+    }
+  };
 
   return (
     <header className="flex items-center justify-between h-16 px-6 bg-card/50 backdrop-blur-md border-b border-border/50 z-20">
@@ -97,28 +199,129 @@ export function Header() {
       {/* ── Right: Search & User ─────────────────────── */}
       <div className="flex items-center gap-4">
         {/* Search Input */}
-        <div className="relative">
+        <div className="relative group" ref={searchRef}>
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <input
+            ref={searchInputRef}
             type="text"
             placeholder="Search bots, findings..."
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              if(e.target.value) setShowResults(true);
+            }}
+            onFocus={() => {
+              if (searchQuery) setShowResults(true);
+            }}
             className={cn(
-              'w-64 h-9 pl-9 pr-4 rounded-lg text-sm',
+              'w-64 h-9 pl-9 pr-12 rounded-lg text-sm',
               'bg-background/50 border border-border/50',
               'text-foreground placeholder:text-muted-foreground/60',
               'focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500/50',
               'transition-all duration-200'
             )}
           />
+          <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center pointer-events-none opacity-60 group-focus-within:opacity-0 transition-opacity">
+            <kbd className="hidden sm:inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-border/50 bg-muted/50 text-[10px] font-medium font-sans text-muted-foreground">
+              <span className="text-[11px]">⌘</span>K
+            </kbd>
+          </div>
+
+          {/* Search Dropdown */}
+          {showResults && searchResults && (
+            <div className="absolute top-full mt-2 right-0 w-80 max-h-[80vh] overflow-y-auto bg-card border border-border/50 rounded-xl shadow-2xl z-50">
+              <div className="p-2 space-y-3">
+                {searchResults.bots?.length > 0 && (
+                  <div>
+                    <h3 className="px-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Bots</h3>
+                    {searchResults.bots.slice(0, 4).map((b: any) => (
+                      <button key={b.id} onClick={() => handleResultClick(`/dashboard/bots/${b.id}`)}
+                        className="w-full text-left px-2 py-1.5 rounded-md hover:bg-white/5 text-sm transition-colors flex items-center gap-2">
+                        <Bot className="w-4 h-4 text-primary shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="truncate text-foreground font-medium">{b.name}</p>
+                          <p className="text-xs text-muted-foreground font-mono">{b.botCode}</p>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                
+                {searchResults.findings?.length > 0 && (
+                  <div>
+                    <h3 className="px-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Findings</h3>
+                    {searchResults.findings.slice(0, 3).map((f: any) => (
+                      <button key={f.id} onClick={() => handleResultClick(`/dashboard/findings`)}
+                        className="w-full text-left px-2 py-1.5 rounded-md hover:bg-white/5 text-sm transition-colors flex items-center gap-2">
+                        <AlertTriangle className="w-4 h-4 text-orange-400 shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="truncate text-foreground">{f.observation}</p>
+                          <p className="text-xs text-muted-foreground">Bot: {f.bot?.name}</p>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {searchResults.components?.length > 0 && (
+                  <div>
+                    <h3 className="px-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Components</h3>
+                    {searchResults.components.slice(0, 3).map((c: any) => (
+                      <button key={c.id} onClick={() => handleResultClick(`/dashboard/components/${c.id}`)}
+                        className="w-full text-left px-2 py-1.5 rounded-md hover:bg-white/5 text-sm transition-colors flex items-center gap-2">
+                        <Puzzle className="w-4 h-4 text-purple-400 shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="truncate text-foreground">{c.name}</p>
+                          <p className="text-xs text-muted-foreground">{c.componentType}</p>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {(!searchResults.bots?.length && !searchResults.findings?.length && !searchResults.components?.length && !searchResults.steps?.length) && (
+                  <div className="p-4 text-center text-sm text-muted-foreground">No results found for "{searchQuery}"</div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
+        {/* Theme Toggle */}
+        <button onClick={toggleTheme} className="relative flex items-center justify-center w-9 h-9 rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
+          {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+        </button>
 
         {/* Notification Bell */}
-        <button className="relative flex items-center justify-center w-9 h-9 rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
-          <Bell className="w-4 h-4" />
-          <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-blue-500 rounded-full" />
-        </button>
+        <div className="relative" ref={notifRef}>
+          <button onClick={toggleNotifications} className="relative flex items-center justify-center w-9 h-9 rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
+            <Bell className="w-4 h-4" />
+            <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-blue-500 rounded-full" />
+          </button>
+          
+          {showNotifications && (
+            <div className="absolute top-full mt-2 right-0 w-80 max-h-[80vh] overflow-y-auto bg-card border border-border/50 rounded-xl shadow-2xl z-50">
+              <div className="p-3 border-b border-border/50 flex justify-between items-center bg-muted/20">
+                <h3 className="text-sm font-semibold">Notifications</h3>
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Audit Log</span>
+              </div>
+              <div className="p-2 space-y-1">
+                {notifications.length === 0 ? (
+                  <div className="p-4 text-center text-sm text-muted-foreground">No recent activity</div>
+                ) : (
+                  notifications.map((n: any) => (
+                    <div key={n.id} className="p-2 rounded-lg hover:bg-white/5 transition-colors border-l-2 border-transparent hover:border-blue-500">
+                      <p className="text-xs font-medium text-foreground">{n.action} <span className="text-muted-foreground font-normal">{n.entityType}</span></p>
+                      <div className="flex justify-between items-center mt-1">
+                        <span className="text-[10px] text-muted-foreground font-mono truncate max-w-[150px]">{n.entityId}</span>
+                        <span className="text-[10px] text-muted-foreground">{new Date(n.timestamp).toLocaleTimeString()}</span>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* User Info */}
         {session?.user && (

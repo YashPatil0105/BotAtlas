@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import {
   AlertTriangle, Search, Filter, X, Eye,
@@ -138,6 +139,8 @@ function CategoryBar({ data }: { data: CategoryBreakdown[] }) {
 }
 
 export default function FindingsBoardPage() {
+  const { data: session } = useSession();
+  const userRole = (session?.user as any)?.role || 'VIEWER';
   const [findings, setFindings] = useState<FindingRecord[]>([]);
   const [stats, setStats] = useState<FindingStats | null>(null);
   const [categoryBreakdown, setCategoryBreakdown] = useState<CategoryBreakdown[]>([]);
@@ -324,20 +327,33 @@ export default function FindingsBoardPage() {
                     </span>
                   </td>
                   <td className="px-4 py-3">
-                    <select
-                      value={finding.status}
-                      onChange={e => updateFindingStatus(finding.id, finding.botId, e.target.value)}
-                      className={`text-xs font-medium rounded-md px-2 py-1 border-0 focus:outline-none cursor-pointer ${
-                        finding.status === 'CLOSED' ? 'bg-green-500/15 text-green-400' :
-                        finding.status === 'IN_PROGRESS' ? 'bg-blue-500/15 text-blue-400' :
-                        finding.status === 'BLOCKED' ? 'bg-red-500/15 text-red-400' :
-                        'bg-amber-500/15 text-amber-400'
-                      }`}
-                    >
-                      {['OPEN', 'IN_PROGRESS', 'BLOCKED', 'CLOSED'].map(s => (
-                        <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>
-                      ))}
-                    </select>
+                    {userRole === 'VIEWER' ? (
+                      <span
+                        className={`text-xs font-medium rounded-md px-2 py-1 border ${
+                          finding.status === 'CLOSED' ? 'bg-green-500/15 text-green-400 border-green-500/30' :
+                          finding.status === 'IN_PROGRESS' ? 'bg-blue-500/15 text-blue-400 border-blue-500/30' :
+                          finding.status === 'BLOCKED' ? 'bg-red-500/15 text-red-400 border-red-500/30' :
+                          'bg-amber-500/15 text-amber-400 border-amber-500/30'
+                        }`}
+                      >
+                        {finding.status.replace(/_/g, ' ')}
+                      </span>
+                    ) : (
+                      <select
+                        value={finding.status}
+                        onChange={e => updateFindingStatus(finding.id, finding.botId, e.target.value)}
+                        className={`text-xs font-medium rounded-md px-2 py-1 border-0 focus:outline-none cursor-pointer ${
+                          finding.status === 'CLOSED' ? 'bg-green-500/15 text-green-400' :
+                          finding.status === 'IN_PROGRESS' ? 'bg-blue-500/15 text-blue-400' :
+                          finding.status === 'BLOCKED' ? 'bg-red-500/15 text-red-400' :
+                          'bg-amber-500/15 text-amber-400'
+                        }`}
+                      >
+                        {['OPEN', 'IN_PROGRESS', 'BLOCKED', 'CLOSED'].map(s => (
+                          <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>
+                        ))}
+                      </select>
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     <Link

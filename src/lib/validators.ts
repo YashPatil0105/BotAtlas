@@ -21,6 +21,27 @@ export const botCreateSchema = z.object({
   reviewSummary: z.string().optional(),
   finalRecommendation: z.enum(["RESTORE", "REFACTOR", "REBUILD", "REPLACE", "RETIRE", "HOLD"]).optional().nullable(),
   reviewStatus: z.enum(["NOT_STARTED", "IN_PROGRESS", "COMPLETED", "AWAITING_VALIDATION"]).optional(),
+  
+  // Bot Registry Additional Fields
+  srNo: z.number().int().optional().nullable(),
+  projectName: z.string().optional().nullable(),
+  partner: z.string().optional().nullable(),
+  departmentSpoc: z.string().optional().nullable(),
+  vendorSpoc: z.string().optional().nullable(),
+  unitySpoc: z.string().optional().nullable(),
+  startDate: z.string().optional().nullable(),
+  cabDate: z.string().optional().nullable(),
+  nextSteps: z.string().optional().nullable(),
+  effortsInDays: z.number().optional().nullable(),
+  roi: z.string().optional().nullable(),
+  oldBotsNewBots: z.string().optional().nullable(),
+  vendorPaymentStatus: z.string().optional().nullable(),
+  botAssociated: z.string().optional().nullable(),
+  botFrequency: z.string().optional().nullable(),
+  processId: z.string().optional().nullable(),
+  server: z.string().optional().nullable(),
+  botExecutionUserId: z.string().optional().nullable(),
+  docsLinks: z.string().optional().nullable(),
 });
 
 export const botStepSchema = z.object({

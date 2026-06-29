@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import '@/app/globals.css';
 import { Providers } from '@/components/providers';
+import { Toaster } from '@/components/ui/toaster';
 
 const inter = Inter({
   subsets: ['latin'],
@@ -26,7 +27,9 @@ export default function RootLayout({
     <html lang="en" className={`${inter.variable} dark h-full antialiased`}>
       <body className="min-h-full bg-background text-foreground font-sans">
         <Providers>{children}</Providers>
+        <Toaster />
       </body>
     </html>
   );
 }
+

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/db";
 import { botCreateSchema } from "@/lib/validators";
 import { BotStatus, ReviewStatus, Criticality, Technology } from "@prisma/client";
+import { getSessionUser, getAssignedBotIds } from "@/lib/getSessionUser";
 
 const DEFAULT_CHECKLIST_ITEMS = [
   "businessPurposeConfirmed",
@@ -31,6 +32,13 @@ const DEFAULT_CHECKLIST_ITEMS = [
 
 export async function GET(request: NextRequest) {
   try {
+    const user = await getSessionUser();
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const assignedBotIds = await getAssignedBotIds(user);
+
     const { searchParams } = new URL(request.url);
     const status = searchParams.get("status");
     const reviewStatus = searchParams.get("reviewStatus");
@@ -40,7 +48,18 @@ export async function GET(request: NextRequest) {
     const technology = searchParams.get("technology");
     const search = searchParams.get("search");
 
+    // Sorting and Pagination parameters
+    const page = parseInt(searchParams.get("page") || "1", 10);
+    const limit = parseInt(searchParams.get("limit") || "10", 10);
+    const sortBy = searchParams.get("sortBy") || "updatedAt";
+    const sortDir = (searchParams.get("sortDir") || "desc") as "asc" | "desc";
+
     const where: Record<string, unknown> = {};
+
+    // Role-based filtering: non-Admin users only see assigned bots
+    if (assignedBotIds !== null) {
+      where.id = { in: assignedBotIds };
+    }
 
     if (status) {
       where.currentStatus = status as BotStatus;
@@ -67,6 +86,20 @@ export async function GET(request: NextRequest) {
       ];
     }
 
+    // Determine orderBy structure
+    let orderBy: any = { updatedAt: "desc" };
+    if (["botCode", "name", "currentStatus", "reviewStatus", "criticality", "vendor", "department", "updatedAt"].includes(sortBy)) {
+      orderBy = { [sortBy]: sortDir };
+    } else if (sortBy === "steps") {
+      orderBy = { steps: { _count: sortDir } };
+    } else if (sortBy === "findings") {
+      orderBy = { findings: { _count: sortDir } };
+    } else if (sortBy === "dependencies") {
+      orderBy = { dependencies: { _count: sortDir } };
+    }
+
+    const skip = (page - 1) * limit;
+
     const [bots, total] = await Promise.all([
       prisma.bot.findMany({
         where,
@@ -79,7 +112,9 @@ export async function GET(request: NextRequest) {
             },
           },
         },
-        orderBy: { updatedAt: "desc" },
+        orderBy,
+        skip,
+        take: limit,
       }),
       prisma.bot.count({ where }),
     ]);
@@ -96,6 +131,14 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const user = await getSessionUser();
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    if (user.role === "VIEWER") {
+      return NextResponse.json({ error: "Viewers cannot create bots" }, { status: 403 });
+    }
+
     const body = await request.json();
     const parsed = botCreateSchema.safeParse(body);
 
@@ -140,6 +183,7 @@ export async function POST(request: NextRequest) {
         reviewSummary: parsed.data.reviewSummary,
         finalRecommendation: parsed.data.finalRecommendation,
         reviewStatus: parsed.data.reviewStatus,
+        createdBy: user.id,
         checklist: {
           create: DEFAULT_CHECKLIST_ITEMS.map((item) => ({
             checklistItem: item,

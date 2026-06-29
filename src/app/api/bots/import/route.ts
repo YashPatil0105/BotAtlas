@@ -94,6 +94,28 @@ export async function POST(request: NextRequest) {
               reviewSummary: rawBot.reviewSummary || null,
               finalRecommendation: rawBot.finalRecommendation || null,
               reviewStatus: parseEnum(rawBot.reviewStatus, ReviewStatus, "NOT_STARTED"),
+              
+              // New Bot Registry Fields
+              srNo: rawBot.srNo ? Number(rawBot.srNo) : null,
+              projectName: rawBot.projectName || null,
+              partner: rawBot.partner || null,
+              departmentSpoc: rawBot.departmentSpoc || null,
+              vendorSpoc: rawBot.vendorSpoc || null,
+              unitySpoc: rawBot.unitySpoc || null,
+              startDate: rawBot.startDate ? new Date(rawBot.startDate) : null,
+              cabDate: rawBot.cabDate ? new Date(rawBot.cabDate) : null,
+              nextSteps: rawBot.nextSteps || null,
+              effortsInDays: rawBot.effortsInDays ? Number(rawBot.effortsInDays) : null,
+              roi: rawBot.roi || null,
+              oldBotsNewBots: rawBot.oldBotsNewBots || null,
+              vendorPaymentStatus: rawBot.vendorPaymentStatus || null,
+              botAssociated: rawBot.botAssociated || null,
+              botFrequency: rawBot.botFrequency || null,
+              processId: rawBot.processId || null,
+              server: rawBot.server || null,
+              botExecutionUserId: rawBot.botExecutionUserId || null,
+              docsLinks: rawBot.docsLinks || null,
+
               checklist: {
                 create: DEFAULT_CHECKLIST_ITEMS.map((item) => ({
                   checklistItem: item,
@@ -199,6 +221,28 @@ export async function POST(request: NextRequest) {
             technicalOwner: row.technicalOwner || row["Technical Owner"] || null,
             scheduleOrTrigger: row.scheduleOrTrigger || row["Schedule"] || row["Trigger"] || null,
             reviewStatus: "NOT_STARTED",
+
+            // New Bot Registry Fields
+            srNo: row.srNo || row["Sr. No"] ? Number(row.srNo || row["Sr. No"]) : null,
+            projectName: row.projectName || row["Project Name"] || null,
+            partner: row.partner || row["Partner"] || null,
+            departmentSpoc: row.departmentSpoc || row["Department spoc"] || null,
+            vendorSpoc: row.vendorSpoc || row["Vendor spoc"] || null,
+            unitySpoc: row.unitySpoc || row["Unity spoc"] || null,
+            startDate: row.startDate || row["Start date"] ? new Date(row.startDate || row["Start date"]) : null,
+            cabDate: row.cabDate || row["Cab date"] ? new Date(row.cabDate || row["Cab date"]) : null,
+            nextSteps: row.nextSteps || row["Next steps"] || null,
+            effortsInDays: row.effortsInDays || row["Efforts in days"] ? Number(row.effortsInDays || row["Efforts in days"]) : null,
+            roi: row.roi || row["Roi( time / fte / process improvements)"] || row["Roi( time / fte/ process improvements)"] || null,
+            oldBotsNewBots: row.oldBotsNewBots || row["Old bots / new bots"] || null,
+            vendorPaymentStatus: row.vendorPaymentStatus || row["Vendor payment status"] || null,
+            botAssociated: row.botAssociated || row["Bot associated"] || null,
+            botFrequency: row.botFrequency || row["Bot frequency"] || null,
+            processId: row.processId || row["Process id"] || null,
+            server: row.server || row["Server"] || null,
+            botExecutionUserId: row.botExecutionUserId || row["Bot execution user id"] || null,
+            docsLinks: row.docsLinks || row["Docs links"] || null,
+
             checklist: {
               create: DEFAULT_CHECKLIST_ITEMS.map((item) => ({
                 checklistItem: item,

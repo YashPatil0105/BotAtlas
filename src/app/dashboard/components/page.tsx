@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import {
   Plus, Search, Filter, X, Eye, Component as ComponentIcon,
@@ -67,6 +68,8 @@ const COMPONENT_TYPES = [
 ];
 
 export default function ComponentCatalogPage() {
+  const { data: session } = useSession();
+  const userRole = (session?.user as any)?.role || 'VIEWER';
   const [components, setComponents] = useState<ComponentRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -321,10 +324,12 @@ export default function ComponentCatalogPage() {
             ))}
           </select>
         </div>
-        <button onClick={() => setShowNewComponent(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 transition-all shadow-lg shadow-primary/20">
-          <Plus className="h-4 w-4" /> New Component
-        </button>
+        {userRole !== 'VIEWER' && (
+          <button onClick={() => setShowNewComponent(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 transition-all shadow-lg shadow-primary/20">
+            <Plus className="h-4 w-4" /> New Component
+          </button>
+        )}
       </div>
 
       {/* New Component Modal */}
@@ -408,7 +413,9 @@ export default function ComponentCatalogPage() {
         <div className="flex flex-col items-center justify-center py-16 rounded-xl border border-dashed border-border/50">
           <Package className="h-12 w-12 text-muted-foreground/40 mb-3" />
           <p className="text-muted-foreground text-sm">No components found</p>
-          <button onClick={() => setShowNewComponent(true)} className="text-sm text-primary hover:underline mt-2">Create your first component</button>
+          {userRole !== 'VIEWER' && (
+            <button onClick={() => setShowNewComponent(true)} className="text-sm text-primary hover:underline mt-2">Create your first component</button>
+          )}
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -484,10 +491,12 @@ export default function ComponentCatalogPage() {
                       <Eye className="h-3.5 w-3.5" />
                       {isExpanded ? 'Collapse' : 'Details'}
                     </button>
-                    <button onClick={() => deleteComponent(comp.id)}
-                      className="text-xs text-destructive/60 hover:text-destructive transition-colors">
-                      Delete
-                    </button>
+                    {userRole !== 'VIEWER' && (
+                      <button onClick={() => deleteComponent(comp.id)}
+                        className="text-xs text-destructive/60 hover:text-destructive transition-colors">
+                        Delete
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -596,6 +605,8 @@ export default function ComponentCatalogPage() {
                         <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-green-500/10 border border-green-500/20 text-green-400">
                           <CheckCircle2 className="h-3.5 w-3.5" /> Registered ({cand.registeredCode})
                         </span>
+                      ) : userRole === 'VIEWER' ? (
+                        <span className="text-xs text-muted-foreground italic">Not Registered</span>
                       ) : (
                         <button
                           onClick={() => approveCandidate(cand)}

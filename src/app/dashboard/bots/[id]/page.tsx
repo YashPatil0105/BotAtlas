@@ -1,13 +1,17 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import { useSession } from 'next-auth/react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
+import Script from 'next/script';
 import {
-  ArrowLeft, Save, Trash2, Plus, GripVertical, X,
+  ArrowLeft, Save, Trash2, Plus, Minus, GripVertical, X,
   CheckCircle2, AlertTriangle, Shield, FileText, GitBranch,
-  ClipboardList, Bug, Upload, Wrench, MessageSquare, Activity
+  ClipboardList, Bug, Upload, Wrench, MessageSquare, Activity, Copy,
+  Paperclip, FileUp
 } from 'lucide-react';
+import { useToast } from '@/components/ui/use-toast';
 
 // Types
 interface BotDetail {
@@ -20,6 +24,27 @@ interface BotDetail {
   steps: any[]; dependencies: any[]; findings: any[]; rootCauseAssessments: any[];
   remediationTasks: any[]; evidences: any[]; checklist: any[];
   completenessScore?: number;
+  
+  // Bot Registry Fields
+  srNo: number | null;
+  projectName: string | null;
+  partner: string | null;
+  departmentSpoc: string | null;
+  vendorSpoc: string | null;
+  unitySpoc: string | null;
+  startDate: string | null;
+  cabDate: string | null;
+  nextSteps: string | null;
+  effortsInDays: number | null;
+  roi: string | null;
+  oldBotsNewBots: string | null;
+  vendorPaymentStatus: string | null;
+  botAssociated: string | null;
+  botFrequency: string | null;
+  processId: string | null;
+  server: string | null;
+  botExecutionUserId: string | null;
+  docsLinks: string | null;
 }
 
 const TABS = [
@@ -77,43 +102,191 @@ const FINDING_CATEGORIES = ['BUSINESS_LOGIC','ARCHITECTURE','PERFORMANCE','MAINT
 const ROOT_CAUSE_CATS = ['CREDENTIAL_ISSUE','UI_CHANGE','SELECTOR_ISSUE','HARDCODED_PATH','MACHINE_ISSUE','BROWSER_ISSUE','NETWORK_VPN_ISSUE','SFTP_API_ISSUE','FILE_DATA_FORMAT_ISSUE','SCHEDULING_ISSUE','LOGIC_DEFECT','PERMISSION_ISSUE','PROCESS_OBSOLETE','UNKNOWN'];
 
 export default function BotDetailPage() {
+  const { data: session } = useSession();
+  const userRole = (session?.user as any)?.role || 'VIEWER';
   const params = useParams();
   const router = useRouter();
   const botId = params.id as string;
+  const { toast } = useToast();
   const [bot, setBot] = useState<BotDetail | null>(null);
+  const [evidence, setEvidence] = useState<any[]>([]);
+  const [auditLogs, setAuditLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('overview');
   const [saving, setSaving] = useState(false);
+  const [cloning, setCloning] = useState(false);
   const [editFields, setEditFields] = useState<Record<string, any>>({});
+  const [uploadingEvidence, setUploadingEvidence] = useState(false);
+  const [evidenceFile, setEvidenceFile] = useState<File | null>(null);
+  const [evidenceType, setEvidenceType] = useState('SCREENSHOT');
 
   // Sub-entity add states
-  const [newStep, setNewStep] = useState({ actionType: 'OTHER', description: '', systemName: '' });
+  const [newStep, setNewStep] = useState({ actionType: 'OTHER', description: '', systemName: '', tags: [] as string[] });
   const [newDep, setNewDep] = useState({ dependencyType: 'OTHER', name: '' });
   const [newFinding, setNewFinding] = useState({ category: 'DOCUMENTATION', observation: '', priority: 'MEDIUM' });
   const [newRootCause, setNewRootCause] = useState({ failurePoint: '', category: 'UNKNOWN', probableCause: '' });
   const [newRemediation, setNewRemediation] = useState({ title: '', priority: 'MEDIUM', owner: '' });
   const [stepMatches, setStepMatches] = useState<any[]>([]);
   const [stepViewMode, setStepViewMode] = useState<'list' | 'visual'>('list');
+  const [depViewMode, setDepViewMode] = useState<'list' | 'graph'>('list');
+  const [zoomLevel, setZoomLevel] = useState(1);
+  const [suggestedTags, setSuggestedTags] = useState<string[]>([]);
+  const mermaidRef = useRef<HTMLDivElement>(null);
 
-  const fetchBot = useCallback(() => {
-    setLoading(true);
-    fetch(`/api/bots/${botId}`)
-      .then(r => r.json())
-      .then(data => { setBot(data); setEditFields(data); setLoading(false); })
-      .catch(() => setLoading(false));
+  const mermaidCode = useMemo(() => {
+    if (!bot) return '';
+    let code = 'graph TD;\n';
+    code += `  Bot["${bot.name}"]\n`;
+    bot.dependencies?.forEach((dep: any, i: number) => {
+      code += `  Dep${i}["${dep.name} (${dep.dependencyType})"]\n`;
+      code += `  Bot -->|Uses| Dep${i}\n`;
+    });
+    bot.steps?.forEach((step: any, i: number) => {
+      if (step.systemName) {
+        code += `  Sys${i}["${step.systemName}"]\n`;
+        code += `  Bot -.->|Step ${i+1}| Sys${i}\n`;
+      }
+    });
+    return code;
+  }, [bot]);
+
+  useEffect(() => {
+    let isMounted = true;
+    if (activeTab === 'dependencies' && depViewMode === 'graph' && mermaidRef.current) {
+      if (typeof (window as any).mermaid !== 'undefined') {
+        const renderGraph = async () => {
+          try {
+            const { svg } = await (window as any).mermaid.render('mermaid-svg-' + botId, mermaidCode);
+            if (isMounted && mermaidRef.current) {
+              mermaidRef.current.innerHTML = svg;
+            }
+          } catch (e) {
+            console.error('Mermaid render error', e);
+          }
+        };
+        renderGraph();
+      }
+    }
+    return () => { isMounted = false; };
+  }, [activeTab, depViewMode, mermaidCode, botId]);
+
+  const fetchBot = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/bots/${botId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setBot(data);
+        setEditFields(data);
+      }
+      const evRes = await fetch(`/api/bots/${botId}/evidence`);
+      if (evRes.ok) {
+        setEvidence(await evRes.json());
+      }
+      const auditRes = await fetch(`/api/bots/${botId}/audit`);
+      if (auditRes.ok) {
+        setAuditLogs(await auditRes.json());
+      }
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setLoading(false);
+    }
   }, [botId]);
 
   useEffect(() => { fetchBot(); }, [fetchBot]);
 
+  useEffect(() => {
+    const text = (newStep.description + " " + newStep.systemName).toLowerCase();
+    const suggestions = new Set<string>();
+    
+    if (text.includes('download') || text.includes('sftp') || text.includes('ftp')) {
+      suggestions.add('file-transfer');
+      if (text.includes('sftp')) suggestions.add('sftp');
+    }
+    if (text.includes('login') || text.includes('portal') || text.includes('auth')) {
+      suggestions.add('authentication');
+      suggestions.add('portal');
+    }
+    if (text.includes('email') || text.includes('notify') || text.includes('mail')) {
+      suggestions.add('notification');
+      suggestions.add('email');
+    }
+    if (text.includes('excel') || text.includes('csv') || text.includes('macro')) {
+      suggestions.add('excel');
+      suggestions.add('data-processing');
+    }
+    if (text.includes('api') || text.includes('rest') || text.includes('http')) {
+      suggestions.add('api');
+      suggestions.add('integration');
+    }
+    if (text.includes('sap')) {
+      suggestions.add('sap');
+      suggestions.add('erp');
+    }
+
+    setSuggestedTags(Array.from(suggestions));
+  }, [newStep.description, newStep.systemName]);
+
   const saveBot = async (fields: Record<string, any>) => {
     setSaving(true);
     try {
-      await fetch(`/api/bots/${botId}`, {
+      const res = await fetch(`/api/bots/${botId}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(fields),
       });
-      fetchBot();
+      if (res.ok) {
+        toast({ title: "Overview Saved", description: "Successfully updated bot details." });
+        fetchBot();
+      } else {
+        toast({ title: "Error Saving", description: "Failed to update bot details.", variant: "destructive" });
+      }
+    } catch {
+      toast({ title: "Error", description: "An unexpected error occurred.", variant: "destructive" });
     } finally { setSaving(false); }
+  };
+
+  const uploadEvidence = async () => {
+    if (!evidenceFile) return;
+    setUploadingEvidence(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', evidenceFile);
+      formData.append('evidenceType', evidenceType);
+      
+      const res = await fetch(`/api/bots/${botId}/evidence`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (res.ok) {
+        toast({ title: "Evidence Uploaded", description: "File successfully attached." });
+        setEvidenceFile(null);
+        fetchBot();
+      } else {
+        toast({ title: "Upload Failed", variant: "destructive" });
+      }
+    } catch {
+      toast({ title: "Error", description: "An unexpected error occurred.", variant: "destructive" });
+    } finally {
+      setUploadingEvidence(false);
+    }
+  };
+
+  const handleClone = async () => {
+    if (!confirm("Are you sure you want to clone this bot? All process steps and dependencies will be copied.")) return;
+    setCloning(true);
+    try {
+      const res = await fetch(`/api/bots/${botId}/clone`, { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) {
+        toast({ title: "Bot Cloned", description: `Successfully created clone: ${data.botCode}` });
+        router.push(`/dashboard/bots/${data.id}`);
+      } else {
+        toast({ title: "Error Cloning Bot", description: data.error || "Failed to clone bot.", variant: "destructive" });
+      }
+    } catch {
+      toast({ title: "Error", description: "An unexpected error occurred while cloning.", variant: "destructive" });
+    } finally { setCloning(false); }
   };
 
   const addStep = async () => {
@@ -126,99 +299,211 @@ export default function BotDetailPage() {
     if (res.ok) {
       const data = await res.json();
       if (data.matchingSteps) setStepMatches(data.matchingSteps);
-      setNewStep({ actionType: 'OTHER', description: '', systemName: '' });
+      setNewStep({ actionType: 'OTHER', description: '', systemName: '', tags: [] });
+      toast({ title: "Step Added", description: "Successfully added step to the workflow." });
       fetchBot();
+    } else {
+      toast({ title: "Error Adding Step", description: "Failed to add step.", variant: "destructive" });
     }
   };
 
   const deleteStep = async (stepId: string) => {
-    await fetch(`/api/bots/${botId}/steps?stepId=${stepId}`, { method: 'DELETE' });
-    fetchBot();
+    const res = await fetch(`/api/bots/${botId}/steps?stepId=${stepId}`, { method: 'DELETE' });
+    if (res.ok) {
+      toast({ title: "Step Deleted", description: "Successfully removed step from the workflow." });
+      fetchBot();
+    } else {
+      toast({ title: "Error Deleting Step", description: "Failed to delete step.", variant: "destructive" });
+    }
   };
 
   const addDependency = async () => {
     if (!newDep.name.trim()) return;
-    await fetch(`/api/bots/${botId}/dependencies`, {
+    const res = await fetch(`/api/bots/${botId}/dependencies`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newDep),
     });
-    setNewDep({ dependencyType: 'OTHER', name: '' });
-    fetchBot();
+    if (res.ok) {
+      setNewDep({ dependencyType: 'OTHER', name: '' });
+      toast({ title: "Dependency Added", description: "Successfully added dependency." });
+      fetchBot();
+    } else {
+      toast({ title: "Error Adding Dependency", description: "Failed to add dependency.", variant: "destructive" });
+    }
   };
 
   const deleteDependency = async (id: string) => {
-    await fetch(`/api/bots/${botId}/dependencies?id=${id}`, { method: 'DELETE' });
-    fetchBot();
+    const res = await fetch(`/api/bots/${botId}/dependencies?id=${id}`, { method: 'DELETE' });
+    if (res.ok) {
+      toast({ title: "Dependency Deleted", description: "Successfully removed dependency." });
+      fetchBot();
+    } else {
+      toast({ title: "Error Deleting Dependency", description: "Failed to delete dependency.", variant: "destructive" });
+    }
   };
 
   const addFinding = async () => {
     if (!newFinding.observation.trim()) return;
-    await fetch(`/api/bots/${botId}/findings`, {
+    const res = await fetch(`/api/bots/${botId}/findings`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newFinding),
     });
-    setNewFinding({ category: 'DOCUMENTATION', observation: '', priority: 'MEDIUM' });
-    fetchBot();
+    if (res.ok) {
+      setNewFinding({ category: 'DOCUMENTATION', observation: '', priority: 'MEDIUM' });
+      toast({ title: "Finding Recorded", description: "Successfully added finding." });
+      fetchBot();
+    } else {
+      toast({ title: "Error Recording Finding", description: "Failed to record finding.", variant: "destructive" });
+    }
   };
 
   const deleteFinding = async (id: string) => {
-    await fetch(`/api/bots/${botId}/findings?id=${id}`, { method: 'DELETE' });
-    fetchBot();
+    const res = await fetch(`/api/bots/${botId}/findings?id=${id}`, { method: 'DELETE' });
+    if (res.ok) {
+      toast({ title: "Finding Deleted", description: "Successfully removed finding." });
+      fetchBot();
+    } else {
+      toast({ title: "Error Deleting Finding", description: "Failed to delete finding.", variant: "destructive" });
+    }
   };
 
   const updateFindingStatus = async (id: string, status: string) => {
-    await fetch(`/api/bots/${botId}/findings`, {
+    const res = await fetch(`/api/bots/${botId}/findings`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ findingId: id, status }),
     });
-    fetchBot();
+    if (res.ok) {
+      toast({ title: "Finding Updated", description: `Finding status set to ${status.replace(/_/g, ' ')}.` });
+      fetchBot();
+    } else {
+      toast({ title: "Error Updating Finding", description: "Failed to update finding status.", variant: "destructive" });
+    }
   };
 
   const addRootCause = async () => {
     if (!newRootCause.failurePoint.trim()) return;
-    await fetch(`/api/bots/${botId}/root-cause`, {
+    const res = await fetch(`/api/bots/${botId}/root-cause`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newRootCause),
     });
-    setNewRootCause({ failurePoint: '', category: 'UNKNOWN', probableCause: '' });
-    fetchBot();
+    if (res.ok) {
+      setNewRootCause({ failurePoint: '', category: 'UNKNOWN', probableCause: '' });
+      toast({ title: "Root Cause Added", description: "Successfully recorded root cause assessment." });
+      fetchBot();
+    } else {
+      toast({ title: "Error Adding Assessment", description: "Failed to add root cause assessment.", variant: "destructive" });
+    }
   };
 
   const deleteRootCause = async (id: string) => {
-    await fetch(`/api/bots/${botId}/root-cause?id=${id}`, { method: 'DELETE' });
-    fetchBot();
+    const res = await fetch(`/api/bots/${botId}/root-cause?id=${id}`, { method: 'DELETE' });
+    if (res.ok) {
+      toast({ title: "Assessment Deleted", description: "Successfully removed root cause assessment." });
+      fetchBot();
+    } else {
+      toast({ title: "Error Deleting Assessment", description: "Failed to delete root cause assessment.", variant: "destructive" });
+    }
   };
 
   const addRemediation = async () => {
     if (!newRemediation.title.trim()) return;
-    await fetch(`/api/bots/${botId}/remediation`, {
+    const res = await fetch(`/api/bots/${botId}/remediation`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newRemediation),
     });
-    setNewRemediation({ title: '', priority: 'MEDIUM', owner: '' });
-    fetchBot();
+    if (res.ok) {
+      setNewRemediation({ title: '', priority: 'MEDIUM', owner: '' });
+      toast({ title: "Task Added", description: "Successfully added remediation task." });
+      fetchBot();
+    } else {
+      toast({ title: "Error Adding Task", description: "Failed to add remediation task.", variant: "destructive" });
+    }
   };
 
   const deleteRemediation = async (id: string) => {
-    await fetch(`/api/bots/${botId}/remediation?id=${id}`, { method: 'DELETE' });
-    fetchBot();
+    const res = await fetch(`/api/bots/${botId}/remediation?id=${id}`, { method: 'DELETE' });
+    if (res.ok) {
+      toast({ title: "Task Deleted", description: "Successfully removed remediation task." });
+      fetchBot();
+    } else {
+      toast({ title: "Error Deleting Task", description: "Failed to delete remediation task.", variant: "destructive" });
+    }
   };
 
   const updateRemediationStatus = async (id: string, status: string) => {
-    await fetch(`/api/bots/${botId}/remediation`, {
+    const res = await fetch(`/api/bots/${botId}/remediation`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id, status }),
     });
-    fetchBot();
+    if (res.ok) {
+      toast({ title: "Task Updated", description: `Task status set to ${status.replace(/_/g, ' ')}.` });
+      fetchBot();
+    } else {
+      toast({ title: "Error Updating Task", description: "Failed to update task status.", variant: "destructive" });
+    }
   };
 
   const updateChecklist = async (item: string, value: string) => {
-    await fetch(`/api/bots/${botId}/checklist`, {
+    const res = await fetch(`/api/bots/${botId}/checklist`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ checklistItem: item, value }),
     });
-    fetchBot();
+    if (res.ok) {
+      toast({ title: "Checklist Updated", description: "Successfully updated checklist item." });
+      fetchBot();
+    } else {
+      toast({ title: "Error Updating Checklist", description: "Failed to update checklist item.", variant: "destructive" });
+    }
   };
 
+
   if (loading) return (
-    <div className="flex items-center justify-center h-64">
-      <div className="h-8 w-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+    <div className="space-y-6 animate-pulse">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="h-10 w-10 bg-muted/65 rounded-lg" />
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <div className="h-4 w-16 bg-muted/65 rounded" />
+              <div className="h-5 w-20 bg-muted/50 rounded-full" />
+            </div>
+            <div className="h-6 w-56 bg-muted/65 rounded" />
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="space-y-1 text-right">
+            <div className="h-3 w-28 bg-muted/65 rounded" />
+            <div className="h-4 w-36 bg-muted/50 rounded-full" />
+          </div>
+        </div>
+      </div>
+
+      <div className="flex gap-1 overflow-x-auto border-b border-border/50 pb-0">
+        {Array.from({ length: 9 }).map((_, i) => (
+          <div key={i} className="h-10 w-28 bg-muted/30 rounded-t-lg" />
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="space-y-4">
+          <div className="rounded-xl border border-border/50 bg-card/85 p-5 space-y-4">
+            <div className="h-4 w-36 bg-muted/65 rounded" />
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="space-y-1">
+                <div className="h-3 w-24 bg-muted/65 rounded" />
+                <div className="h-9 w-full bg-muted/35 rounded-lg" />
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="space-y-4">
+          <div className="rounded-xl border border-border/50 bg-card/85 p-5 space-y-4">
+            <div className="h-4 w-36 bg-muted/65 rounded" />
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="space-y-1">
+                <div className="h-3 w-24 bg-muted/65 rounded" />
+                <div className="h-9 w-full bg-muted/35 rounded-lg" />
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
     </div>
   );
 
@@ -226,8 +511,27 @@ export default function BotDetailPage() {
 
   const completeness = bot.completenessScore ?? 0;
 
+  // Health Score Calculation
+  const checklistTotal = bot?.checklist?.length || 0;
+  const checklistYes = bot?.checklist?.filter((c: any) => c.value === 'YES').length || 0;
+  const checklistRate = checklistTotal ? checklistYes / checklistTotal : 0;
+  
+  const openCriticalFindings = bot?.findings?.filter((f: any) => (f.priority === 'CRITICAL' || f.priority === 'HIGH') && f.status !== 'CLOSED').length || 0;
+  
+  const healthScore = Math.round(
+    (completeness * 0.30) + 
+    (openCriticalFindings === 0 ? 25 : 0) + 
+    (bot?.currentStatus === 'ACTIVE' ? 20 : 10) +
+    (checklistRate * 15) +
+    (bot?.businessOwner ? 10 : 0)
+  );
+
   return (
     <div className="space-y-4 animate-fade-in">
+      <Script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js" strategy="lazyOnload" onLoad={() => {
+        (window as any).mermaid.initialize({ startOnLoad: false, theme: 'dark' });
+      }} />
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -245,18 +549,37 @@ export default function BotDetailPage() {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <div className="text-right mr-2">
-            <p className="text-xs text-muted-foreground">Review Completeness</p>
-            <div className="flex items-center gap-2 mt-1">
-              <div className="w-32 h-2 bg-muted rounded-full overflow-hidden">
-                <div className="h-full rounded-full transition-all duration-500" style={{
-                  width: `${completeness}%`,
-                  background: completeness > 80 ? '#22c55e' : completeness > 50 ? '#3b82f6' : '#f59e0b'
-                }} />
+          <div className="flex items-center gap-6">
+            {/* Completeness Gauge */}
+            <div className="flex flex-col items-center">
+              <span className="text-[10px] text-muted-foreground uppercase tracking-widest font-semibold mb-1">Completeness</span>
+              <div className="relative h-12 w-12 flex items-center justify-center">
+                <svg className="absolute inset-0 h-full w-full -rotate-90 transform" viewBox="0 0 36 36">
+                  <path className="text-muted stroke-current" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" strokeWidth="3" />
+                  <path className="text-blue-500 stroke-current transition-all duration-1000 ease-out" strokeDasharray={`${completeness}, 100`} d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" strokeWidth="3" strokeLinecap="round" />
+                </svg>
+                <span className="text-xs font-medium">{completeness}%</span>
               </div>
-              <span className="text-sm font-medium">{completeness}%</span>
+            </div>
+
+            {/* Health Score Gauge */}
+            <div className="flex flex-col items-center">
+              <span className="text-[10px] text-muted-foreground uppercase tracking-widest font-semibold mb-1">Health Score</span>
+              <div className="relative h-12 w-12 flex items-center justify-center">
+                <svg className="absolute inset-0 h-full w-full -rotate-90 transform" viewBox="0 0 36 36">
+                  <path className="text-muted stroke-current" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" strokeWidth="3" />
+                  <path className={`${healthScore > 80 ? 'text-green-500' : healthScore > 50 ? 'text-yellow-500' : 'text-red-500'} stroke-current transition-all duration-1000 ease-out`} strokeDasharray={`${healthScore}, 100`} d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" strokeWidth="3" strokeLinecap="round" />
+                </svg>
+                <span className="text-xs font-medium">{healthScore}</span>
+              </div>
             </div>
           </div>
+          {userRole === 'ADMIN' && (
+            <button onClick={handleClone} disabled={cloning}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-secondary text-secondary-foreground border border-border/50 rounded-lg text-sm font-medium hover:bg-white/5 disabled:opacity-50 transition-all">
+              <Copy className="h-4 w-4" /> {cloning ? 'Cloning...' : 'Clone Bot'}
+            </button>
+          )}
         </div>
       </div>
 
@@ -297,11 +620,36 @@ export default function BotDetailPage() {
                     <label className="text-xs text-muted-foreground mb-1 block">{f.label}</label>
                     {f.type === 'textarea' ? (
                       <textarea value={editFields[f.key] || ''} onChange={e => setEditFields(p => ({ ...p, [f.key]: e.target.value }))}
+                        disabled={userRole === 'VIEWER'}
                         rows={3} className="w-full px-3 py-2 bg-background border border-border/50 rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary/50" />
                     ) : (
                       <input type="text" value={editFields[f.key] || ''} onChange={e => setEditFields(p => ({ ...p, [f.key]: e.target.value }))}
+                        disabled={userRole === 'VIEWER'}
                         className="w-full px-3 py-2 bg-background border border-border/50 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/50" />
                     )}
+                  </div>
+                ))}
+              </div>
+              
+              {/* Additional Registry Info */}
+              <div className="rounded-xl border border-border/50 bg-card/80 p-5 space-y-4 mt-4">
+                <h3 className="text-sm font-semibold">Registry Information</h3>
+                {[
+                  { key: 'projectName', label: 'Project Name', type: 'text' },
+                  { key: 'partner', label: 'Partner', type: 'text' },
+                  { key: 'processId', label: 'Process ID', type: 'text' },
+                  { key: 'departmentSpoc', label: 'Department SPOC', type: 'text' },
+                  { key: 'vendorSpoc', label: 'Vendor SPOC', type: 'text' },
+                  { key: 'unitySpoc', label: 'Unity SPOC', type: 'text' },
+                  { key: 'roi', label: 'ROI (Time / FTE)', type: 'text' },
+                  { key: 'oldBotsNewBots', label: 'Old/New Bots', type: 'text' },
+                  { key: 'vendorPaymentStatus', label: 'Vendor Payment Status', type: 'text' },
+                ].map(f => (
+                  <div key={f.key}>
+                    <label className="text-xs text-muted-foreground mb-1 block">{f.label}</label>
+                    <input type="text" value={editFields[f.key] || ''} onChange={e => setEditFields(p => ({ ...p, [f.key]: e.target.value }))}
+                      disabled={userRole === 'VIEWER'}
+                      className="w-full px-3 py-2 bg-background border border-border/50 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/50" />
                   </div>
                 ))}
               </div>
@@ -322,20 +670,104 @@ export default function BotDetailPage() {
                     <label className="text-xs text-muted-foreground mb-1 block">{f.label}</label>
                     {f.type === 'select' ? (
                       <select value={editFields[f.key] || ''} onChange={e => setEditFields(p => ({ ...p, [f.key]: e.target.value }))}
+                        disabled={userRole === 'VIEWER'}
                         className="w-full px-3 py-2 bg-background border border-border/50 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/50">
                         {f.options!.map(o => <option key={o} value={o}>{o.replace(/_/g, ' ')}</option>)}
                       </select>
                     ) : (
                       <input type="text" value={editFields[f.key] || ''} onChange={e => setEditFields(p => ({ ...p, [f.key]: e.target.value }))}
+                        disabled={userRole === 'VIEWER'}
                         className="w-full px-3 py-2 bg-background border border-border/50 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/50" />
                     )}
                   </div>
                 ))}
               </div>
-              <button onClick={() => saveBot(editFields)} disabled={saving}
-                className="w-full py-2.5 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-50 transition-all flex items-center justify-center gap-2">
-                <Save className="h-4 w-4" /> {saving ? 'Saving...' : 'Save Changes'}
-              </button>
+              
+              {/* Additional Operations Info */}
+              <div className="rounded-xl border border-border/50 bg-card/80 p-5 space-y-4 mt-4">
+                <h3 className="text-sm font-semibold">Operations Information</h3>
+                {[
+                  { key: 'server', label: 'Server', type: 'text' },
+                  { key: 'botExecutionUserId', label: 'Bot Execution User ID', type: 'text' },
+                  { key: 'botAssociated', label: 'Bot Associated', type: 'text' },
+                  { key: 'botFrequency', label: 'Bot Frequency', type: 'text' },
+                  { key: 'startDate', label: 'Start Date', type: 'text' },
+                  { key: 'cabDate', label: 'CAB Date', type: 'text' },
+                  { key: 'effortsInDays', label: 'Efforts (Days)', type: 'number' },
+                ].map(f => (
+                  <div key={f.key}>
+                    <label className="text-xs text-muted-foreground mb-1 block">{f.label}</label>
+                    <input type={f.type} value={editFields[f.key] || ''} onChange={e => setEditFields(p => ({ ...p, [f.key]: f.type === 'number' ? Number(e.target.value) : e.target.value }))}
+                      disabled={userRole === 'VIEWER'}
+                      className="w-full px-3 py-2 bg-background border border-border/50 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/50" />
+                  </div>
+                ))}
+                
+                {(() => {
+                  let docs: Record<string, string> = {};
+                  try { docs = JSON.parse(editFields['docsLinks'] || '{}'); } 
+                  catch { docs = { Other: editFields['docsLinks'] || '' }; }
+
+                  return (
+                    <div className="bg-muted/10 p-3 rounded-lg border border-border/30">
+                      <label className="text-xs font-semibold text-foreground mb-2 block">Documentation Links</label>
+                      <div className="flex gap-2 mb-3">
+                        <select 
+                          value=""
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (val && docs[val]) window.open(docs[val], '_blank');
+                          }}
+                          className="w-full px-3 py-2 bg-background border border-border/50 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 cursor-pointer"
+                        >
+                          <option value="">Select Document to View...</option>
+                          {['SOP', 'BRD', 'FSD', 'Other'].map(type => (
+                            <option key={type} value={type} disabled={!docs[type]}>
+                              {type} {docs[type] ? '✓ (Open Link)' : '(Not added)'}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      
+                      {userRole !== 'VIEWER' && (
+                        <div className="space-y-2 border-t border-border/50 pt-3">
+                          <label className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Edit Links</label>
+                          {['SOP', 'BRD', 'FSD', 'Other'].map(type => (
+                            <div key={type} className="flex items-center gap-2">
+                              <span className="text-xs font-medium w-10 text-muted-foreground">{type}</span>
+                              <input 
+                                type="text"
+                                placeholder={`Paste ${type} URL...`}
+                                value={docs[type] || ''}
+                                onChange={e => {
+                                  const newDocs = { ...docs };
+                                  if (e.target.value.trim()) newDocs[type] = e.target.value.trim();
+                                  else delete newDocs[type];
+                                  setEditFields(p => ({ ...p, docsLinks: Object.keys(newDocs).length ? JSON.stringify(newDocs) : null }));
+                                }}
+                                className="flex-1 px-2 py-1.5 bg-background border border-border/50 rounded text-xs focus:outline-none focus:ring-1 focus:ring-primary/50"
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+                <div>
+                  <label className="text-xs text-muted-foreground mb-1 block">Next Steps</label>
+                  <textarea value={editFields['nextSteps'] || ''} onChange={e => setEditFields(p => ({ ...p, nextSteps: e.target.value }))}
+                    disabled={userRole === 'VIEWER'}
+                    rows={2} className="w-full px-3 py-2 bg-background border border-border/50 rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary/50" />
+                </div>
+              </div>
+
+              {userRole !== 'VIEWER' && (
+                <button onClick={() => saveBot(editFields)} disabled={saving}
+                  className="w-full py-2.5 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-50 transition-all flex items-center justify-center gap-2">
+                  <Save className="h-4 w-4" /> {saving ? 'Saving...' : 'Save Changes'}
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -344,34 +776,51 @@ export default function BotDetailPage() {
         {activeTab === 'steps' && (
           <div className="space-y-4">
             {/* Add Step */}
-            <div className="rounded-xl border border-border/50 bg-card/80 p-4">
-              <h3 className="text-sm font-semibold mb-3">Add Process Step</h3>
-              <div className="flex gap-3 items-end">
-                <div className="w-48">
+            {userRole !== 'VIEWER' && (
+              <div className="rounded-xl border border-border/50 bg-card/80 p-4">
+                <h3 className="text-sm font-semibold mb-3">Add Process Step</h3>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+                <div>
                   <label className="text-xs text-muted-foreground mb-1 block">Action Type</label>
                   <select value={newStep.actionType} onChange={e => setNewStep(p => ({ ...p, actionType: e.target.value }))}
                     className="w-full px-3 py-2 bg-background border border-border/50 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/50">
                     {ACTION_TYPES.map(a => <option key={a} value={a}>{a.replace(/_/g, ' ')}</option>)}
                   </select>
                 </div>
-                <div className="flex-1">
+                <div className="md:col-span-2">
                   <label className="text-xs text-muted-foreground mb-1 block">Description</label>
                   <input type="text" value={newStep.description} onChange={e => setNewStep(p => ({ ...p, description: e.target.value }))}
                     placeholder="e.g., Download reconciliation file from NPCI portal"
                     className="w-full px-3 py-2 bg-background border border-border/50 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/50" />
                 </div>
-                <div className="w-40">
+                <div>
                   <label className="text-xs text-muted-foreground mb-1 block">System</label>
                   <input type="text" value={newStep.systemName} onChange={e => setNewStep(p => ({ ...p, systemName: e.target.value }))}
                     placeholder="e.g., NPCI Portal"
                     className="w-full px-3 py-2 bg-background border border-border/50 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/50" />
                 </div>
+              </div>
+              {suggestedTags.length > 0 && (
+                <div className="mt-3">
+                  <label className="text-xs text-muted-foreground mb-1 flex items-center gap-1">Suggested Tags <span className="text-[10px] bg-primary/10 text-primary px-1 rounded">Click to apply</span></label>
+                  <div className="flex flex-wrap gap-2 mt-1">
+                    {suggestedTags.map(tag => (
+                      <button key={tag} onClick={() => setNewStep(p => ({ ...p, tags: [...new Set([...p.tags, tag])] }))} 
+                        className="px-2 py-0.5 rounded-full bg-secondary/50 hover:bg-secondary text-secondary-foreground text-xs border border-border/50 transition-colors">
+                        + {tag}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <div className="mt-4 flex justify-end">
                 <button onClick={addStep} disabled={!newStep.description.trim()}
-                  className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-50 transition-all whitespace-nowrap">
-                  <Plus className="h-4 w-4" />
+                  className="px-6 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-50 transition-all">
+                  <Plus className="h-4 w-4 inline mr-2" /> Add Step
                 </button>
               </div>
             </div>
+            )}
 
             {/* Step Matches */}
             {stepMatches.length > 0 && (
@@ -428,9 +877,11 @@ export default function BotDetailPage() {
                     </span>
                     <span className="flex-1 text-sm text-foreground">{step.description}</span>
                     {step.systemName && <span className="text-xs text-muted-foreground bg-muted/50 px-2 py-0.5 rounded">{step.systemName}</span>}
-                    <button onClick={() => deleteStep(step.id)} className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-destructive/10 text-destructive/60 hover:text-destructive transition-all">
-                      <X className="h-3.5 w-3.5" />
-                    </button>
+                    {userRole !== 'VIEWER' && (
+                      <button onClick={() => deleteStep(step.id)} className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-destructive/10 text-destructive/60 hover:text-destructive transition-all">
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
@@ -491,41 +942,137 @@ export default function BotDetailPage() {
         {/* DEPENDENCIES TAB */}
         {activeTab === 'dependencies' && (
           <div className="space-y-4">
-            <div className="rounded-xl border border-border/50 bg-card/80 p-4">
-              <h3 className="text-sm font-semibold mb-3">Add Dependency</h3>
-              <div className="flex gap-3 items-end">
-                <div className="w-40">
-                  <label className="text-xs text-muted-foreground mb-1 block">Type</label>
-                  <select value={newDep.dependencyType} onChange={e => setNewDep(p => ({ ...p, dependencyType: e.target.value }))}
-                    className="w-full px-3 py-2 bg-background border border-border/50 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/50">
-                    {DEP_TYPES.map(d => <option key={d} value={d}>{d}</option>)}
-                  </select>
-                </div>
-                <div className="flex-1">
-                  <label className="text-xs text-muted-foreground mb-1 block">Name</label>
-                  <input type="text" value={newDep.name} onChange={e => setNewDep(p => ({ ...p, name: e.target.value }))}
-                    placeholder="e.g., NPCI Portal, Bank SFTP Server"
-                    className="w-full px-3 py-2 bg-background border border-border/50 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/50" />
-                </div>
-                <button onClick={addDependency} disabled={!newDep.name.trim()}
-                  className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm hover:bg-primary/90 disabled:opacity-50 transition-all">
-                  <Plus className="h-4 w-4" />
-                </button>
+            <div className="flex items-center justify-between">
+              <div className="flex bg-muted/50 p-1 rounded-lg">
+                <button onClick={() => setDepViewMode('list')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${depViewMode === 'list' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground'}`}>List View</button>
+                <button onClick={() => setDepViewMode('graph')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${depViewMode === 'graph' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground'}`}>Graph View</button>
               </div>
             </div>
-            <div className="space-y-2">
-              {bot.dependencies.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground text-sm rounded-xl border border-dashed border-border/50">No dependencies added yet.</div>
-              ) : bot.dependencies.map((dep: any) => (
-                <div key={dep.id} className="flex items-center gap-3 rounded-xl border border-border/50 bg-card/80 p-3 group hover:border-border transition-colors">
-                  <span className="px-2 py-0.5 bg-secondary text-secondary-foreground text-xs font-medium rounded-md">{dep.dependencyType}</span>
-                  <span className="flex-1 text-sm">{dep.name}</span>
-                  {dep.accessConfirmed && <CheckCircle2 className="h-4 w-4 text-green-400" />}
-                  <button onClick={() => deleteDependency(dep.id)} className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-destructive/10 text-destructive/60 hover:text-destructive transition-all">
-                    <X className="h-3.5 w-3.5" />
+
+            {depViewMode === 'list' ? (
+              <>
+                {userRole !== 'VIEWER' && (
+                  <div className="rounded-xl border border-border/50 bg-card/80 p-4">
+                    <h3 className="text-sm font-semibold mb-3">Add Dependency</h3>
+                  <div className="flex gap-3 items-end">
+                    <div className="w-40">
+                      <label className="text-xs text-muted-foreground mb-1 block">Type</label>
+                      <select value={newDep.dependencyType} onChange={e => setNewDep(p => ({ ...p, dependencyType: e.target.value }))}
+                        className="w-full px-3 py-2 bg-background border border-border/50 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/50">
+                        {DEP_TYPES.map(d => <option key={d} value={d}>{d}</option>)}
+                      </select>
+                    </div>
+                    <div className="flex-1">
+                      <label className="text-xs text-muted-foreground mb-1 block">Name</label>
+                      <input type="text" value={newDep.name} onChange={e => setNewDep(p => ({ ...p, name: e.target.value }))}
+                        placeholder="e.g., NPCI Portal, Bank SFTP Server"
+                        className="w-full px-3 py-2 bg-background border border-border/50 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/50" />
+                    </div>
+                    <button onClick={addDependency} disabled={!newDep.name.trim()}
+                      className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm hover:bg-primary/90 disabled:opacity-50 transition-all">
+                      <Plus className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+                )}
+                <div className="space-y-2">
+                  {bot.dependencies.length === 0 ? (
+                    <div className="text-center py-8 text-muted-foreground text-sm rounded-xl border border-dashed border-border/50">No dependencies added yet.</div>
+                  ) : bot.dependencies.map((dep: any) => (
+                    <div key={dep.id} className="flex items-center gap-3 rounded-xl border border-border/50 bg-card/80 p-3 group hover:border-border transition-colors">
+                      <span className="px-2 py-0.5 bg-secondary text-secondary-foreground text-xs font-medium rounded-md">{dep.dependencyType}</span>
+                      <span className="flex-1 text-sm">{dep.name}</span>
+                      {dep.accessConfirmed && <CheckCircle2 className="h-4 w-4 text-green-400" />}
+                      {userRole !== 'VIEWER' && (
+                        <button onClick={() => deleteDependency(dep.id)} className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-destructive/10 text-destructive/60 hover:text-destructive transition-all">
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <div className="relative rounded-xl border border-border/50 bg-card/80 p-6 min-h-[500px] flex flex-col overflow-hidden">
+                <div className="absolute top-4 right-4 z-10 flex gap-1 bg-background/80 backdrop-blur-sm border border-border/50 p-1 rounded-lg shadow-sm">
+                  <button onClick={() => setZoomLevel(z => Math.max(z - 0.2, 0.4))} className="p-1.5 hover:bg-muted rounded text-foreground transition-colors" title="Zoom Out">
+                    <Minus className="w-4 h-4" />
+                  </button>
+                  <button onClick={() => setZoomLevel(1)} className="px-2 text-xs font-medium hover:bg-muted rounded text-foreground transition-colors" title="Reset Zoom">
+                    {Math.round(zoomLevel * 100)}%
+                  </button>
+                  <button onClick={() => setZoomLevel(z => Math.min(z + 0.2, 3))} className="p-1.5 hover:bg-muted rounded text-foreground transition-colors" title="Zoom In">
+                    <Plus className="w-4 h-4" />
                   </button>
                 </div>
-              ))}
+                <div className="flex-1 w-full h-full overflow-auto flex">
+                  <div 
+                    ref={mermaidRef} 
+                    className="mermaid-container m-auto transition-all duration-200 ease-out"
+                    style={{ zoom: zoomLevel }}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* EVIDENCE TAB */}
+        {activeTab === 'evidence' && (
+          <div className="space-y-6 animate-fade-in">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-semibold flex items-center gap-2"><Paperclip className="h-5 w-5 text-blue-400" /> Attached Evidence</h3>
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {userRole !== 'VIEWER' && (
+                <div className="col-span-1 border border-border/50 bg-card rounded-xl p-5 h-fit">
+                  <h4 className="font-medium mb-4 flex items-center gap-2"><FileUp className="h-4 w-4 text-muted-foreground" /> Upload New Evidence</h4>
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">Evidence Type</label>
+                    <select value={evidenceType} onChange={e => setEvidenceType(e.target.value)} className="w-full bg-background border border-border/50 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50">
+                      {['SCREENSHOT', 'PAD_EXPORT', 'BRD', 'ERROR_LOG', 'OTHER'].map(t => (
+                        <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">File</label>
+                    <input type="file" onChange={e => setEvidenceFile(e.target.files?.[0] || null)} className="w-full text-sm text-muted-foreground file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-medium file:bg-primary/10 file:text-primary hover:file:bg-primary/20 transition-colors" />
+                  </div>
+                  <button onClick={uploadEvidence} disabled={!evidenceFile || uploadingEvidence} className="w-full flex justify-center items-center gap-2 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors">
+                    {uploadingEvidence ? 'Uploading...' : 'Upload File'}
+                  </button>
+                </div>
+              </div>
+              )}
+
+              <div className={userRole === 'VIEWER' ? 'col-span-3 space-y-3' : 'col-span-2 space-y-3'}>
+                {evidence.length === 0 ? (
+                  <div className="text-center py-10 border border-dashed border-border/50 rounded-xl bg-muted/20">
+                    <p className="text-sm text-muted-foreground">No evidence attached yet.</p>
+                  </div>
+                ) : (
+                  evidence.map((ev: any) => (
+                    <div key={ev.id} className="flex items-center justify-between p-4 border border-border/50 bg-card rounded-xl">
+                      <div className="flex items-center gap-4">
+                        <div className="h-10 w-10 rounded bg-primary/10 flex items-center justify-center">
+                          <FileText className="h-5 w-5 text-primary" />
+                        </div>
+                        <div>
+                          <p className="text-sm font-medium text-foreground">{ev.fileName}</p>
+                          <div className="flex items-center gap-2 mt-1">
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-secondary text-secondary-foreground font-mono">{ev.evidenceType}</span>
+                            <span className="text-xs text-muted-foreground">Uploaded on {new Date(ev.uploadedAt).toLocaleDateString()}</span>
+                          </div>
+                        </div>
+                      </div>
+                      <a href={ev.filePath} target="_blank" rel="noreferrer" className="text-sm text-blue-500 hover:underline">View / Download</a>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
           </div>
         )}
@@ -544,6 +1091,7 @@ export default function BotDetailPage() {
                     <div className="flex gap-1">
                       {['YES', 'NO', 'NOT_VERIFIED', 'NA'].map(v => (
                         <button key={v} onClick={() => updateChecklist(item.key, v)}
+                          disabled={userRole === 'VIEWER'}
                           className={`px-2.5 py-1 rounded-md text-xs font-medium transition-all ${
                             val === v
                               ? v === 'YES' ? 'bg-green-500/20 text-green-400 ring-1 ring-green-500/30'
@@ -566,8 +1114,9 @@ export default function BotDetailPage() {
         {/* ROOT CAUSE TAB */}
         {activeTab === 'rootcause' && (
           <div className="space-y-4">
-            <div className="rounded-xl border border-border/50 bg-card/80 p-4">
-              <h3 className="text-sm font-semibold mb-3">Add Root Cause Assessment</h3>
+            {userRole !== 'VIEWER' && (
+              <div className="rounded-xl border border-border/50 bg-card/80 p-4">
+                <h3 className="text-sm font-semibold mb-3">Add Root Cause Assessment</h3>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
                 <div>
                   <label className="text-xs text-muted-foreground mb-1 block">Failure Point</label>
@@ -593,6 +1142,7 @@ export default function BotDetailPage() {
                 <Plus className="h-4 w-4 inline mr-1" /> Add
               </button>
             </div>
+            )}
             <div className="space-y-2">
               {bot.rootCauseAssessments.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground text-sm rounded-xl border border-dashed border-border/50">No root cause assessments yet.</div>
@@ -604,9 +1154,11 @@ export default function BotDetailPage() {
                       <p className="text-sm font-medium mt-1">{rc.failurePoint}</p>
                       {rc.probableCause && <p className="text-sm text-muted-foreground mt-1">{rc.probableCause}</p>}
                     </div>
-                    <button onClick={() => deleteRootCause(rc.id)} className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-destructive/10 text-destructive/60 hover:text-destructive transition-all">
-                      <X className="h-3.5 w-3.5" />
-                    </button>
+                    {userRole !== 'VIEWER' && (
+                      <button onClick={() => deleteRootCause(rc.id)} className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-destructive/10 text-destructive/60 hover:text-destructive transition-all">
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}
@@ -617,8 +1169,9 @@ export default function BotDetailPage() {
         {/* FINDINGS TAB */}
         {activeTab === 'findings' && (
           <div className="space-y-4">
-            <div className="rounded-xl border border-border/50 bg-card/80 p-4">
-              <h3 className="text-sm font-semibold mb-3">Add Finding</h3>
+            {userRole !== 'VIEWER' && (
+              <div className="rounded-xl border border-border/50 bg-card/80 p-4">
+                <h3 className="text-sm font-semibold mb-3">Add Finding</h3>
               <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-3">
                 <div>
                   <label className="text-xs text-muted-foreground mb-1 block">Category</label>
@@ -645,7 +1198,8 @@ export default function BotDetailPage() {
                 className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm hover:bg-primary/90 disabled:opacity-50 transition-all">
                 <Plus className="h-4 w-4 inline mr-1" /> Add Finding
               </button>
-            </div>
+              </div>
+            )}
             <div className="space-y-2">
               {bot.findings.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground text-sm rounded-xl border border-dashed border-border/50">No findings recorded yet.</div>
@@ -661,15 +1215,18 @@ export default function BotDetailPage() {
                           f.priority === 'MEDIUM' ? 'bg-blue-500/15 text-blue-400' : 'bg-slate-500/15 text-slate-400'
                         }`}>{f.priority}</span>
                         <select value={f.status} onChange={e => updateFindingStatus(f.id, e.target.value)}
+                          disabled={userRole === 'VIEWER'}
                           className="ml-auto text-xs bg-background border border-border/50 rounded px-2 py-1 focus:outline-none">
                           {['OPEN','IN_PROGRESS','BLOCKED','CLOSED'].map(s => <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>)}
                         </select>
                       </div>
                       <p className="text-sm">{f.observation}</p>
                     </div>
-                    <button onClick={() => deleteFinding(f.id)} className="opacity-0 group-hover:opacity-100 p-1 ml-2 rounded hover:bg-destructive/10 text-destructive/60 hover:text-destructive transition-all">
-                      <X className="h-3.5 w-3.5" />
-                    </button>
+                    {userRole !== 'VIEWER' && (
+                      <button onClick={() => deleteFinding(f.id)} className="opacity-0 group-hover:opacity-100 p-1 ml-2 rounded hover:bg-destructive/10 text-destructive/60 hover:text-destructive transition-all">
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}
@@ -679,9 +1236,10 @@ export default function BotDetailPage() {
 
         {/* REMEDIATION TAB */}
         {activeTab === 'remediation' && (
-          <div className="space-y-4">
-            <div className="rounded-xl border border-border/50 bg-card/80 p-4">
-              <h3 className="text-sm font-semibold mb-3">Add Remediation Task</h3>
+          <div className="space-y-6">
+            {userRole !== 'VIEWER' && (
+              <div className="rounded-xl border border-border/50 bg-card/80 p-4">
+                <h3 className="text-sm font-semibold mb-3">Add Remediation Task</h3>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
                 <div className="sm:col-span-2">
                   <label className="text-xs text-muted-foreground mb-1 block">Title</label>
@@ -700,24 +1258,62 @@ export default function BotDetailPage() {
                 <Plus className="h-4 w-4 inline mr-1" /> Add Task
               </button>
             </div>
-            <div className="space-y-2">
-              {bot.remediationTasks.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground text-sm rounded-xl border border-dashed border-border/50">No remediation tasks yet.</div>
-              ) : bot.remediationTasks.map((t: any) => (
-                <div key={t.id} className="flex items-center gap-3 rounded-xl border border-border/50 bg-card/80 p-3 group">
-                  <select value={t.status} onChange={e => updateRemediationStatus(t.id, e.target.value)}
-                    className={`text-xs font-medium rounded-md px-2 py-1 border-0 focus:outline-none ${
-                      t.status === 'CLOSED' ? 'bg-green-500/15 text-green-400' :
-                      t.status === 'IN_PROGRESS' ? 'bg-blue-500/15 text-blue-400' :
-                      t.status === 'BLOCKED' ? 'bg-red-500/15 text-red-400' : 'bg-slate-500/15 text-slate-400'
-                    }`}>
-                    {['OPEN','IN_PROGRESS','BLOCKED','CLOSED'].map(s => <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>)}
-                  </select>
-                  <span className="flex-1 text-sm">{t.title}</span>
-                  {t.owner && <span className="text-xs text-muted-foreground">{t.owner}</span>}
-                  <button onClick={() => deleteRemediation(t.id)} className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-destructive/10 text-destructive/60 hover:text-destructive transition-all">
-                    <X className="h-3.5 w-3.5" />
-                  </button>
+            )}
+            
+            {/* Kanban Board */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {['OPEN', 'IN_PROGRESS', 'BLOCKED', 'CLOSED'].map((columnStatus) => (
+                <div 
+                  key={columnStatus} 
+                  className="rounded-xl border border-border/50 bg-card/40 flex flex-col h-[500px]"
+                  onDragOver={(e) => { e.preventDefault(); e.currentTarget.classList.add('bg-primary/5'); }}
+                  onDragLeave={(e) => { e.currentTarget.classList.remove('bg-primary/5'); }}
+                  onDrop={(e) => {
+                    if (userRole === 'VIEWER') return;
+                    e.preventDefault();
+                    e.currentTarget.classList.remove('bg-primary/5');
+                    const taskId = e.dataTransfer.getData('taskId');
+                    if (taskId) updateRemediationStatus(taskId, columnStatus);
+                  }}
+                >
+                  <div className="p-3 border-b border-border/50 flex items-center justify-between bg-card/80 rounded-t-xl">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">{columnStatus.replace('_', ' ')}</h4>
+                    <span className="text-xs bg-secondary text-secondary-foreground px-2 py-0.5 rounded-full">
+                      {bot.remediationTasks?.filter((t: any) => t.status === columnStatus).length || 0}
+                    </span>
+                  </div>
+                  <div className="p-2 flex-1 overflow-y-auto space-y-2">
+                    {bot.remediationTasks?.filter((t: any) => t.status === columnStatus).map((t: any) => (
+                      <div 
+                        key={t.id} 
+                        draggable={userRole !== 'VIEWER'}
+                        onDragStart={(e) => { e.dataTransfer.setData('taskId', t.id); }}
+                        className="bg-card border border-border/50 rounded-lg p-3 shadow-sm hover:border-primary/50 cursor-grab active:cursor-grabbing group relative"
+                      >
+                        <div className="flex justify-between items-start mb-2">
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded-sm font-semibold uppercase tracking-wider ${
+                            t.priority === 'CRITICAL' ? 'bg-red-500/15 text-red-400' :
+                            t.priority === 'HIGH' ? 'bg-orange-500/15 text-orange-400' :
+                            t.priority === 'MEDIUM' ? 'bg-blue-500/15 text-blue-400' : 'bg-slate-500/15 text-slate-400'
+                          }`}>{t.priority}</span>
+                          {userRole !== 'VIEWER' && (
+                            <button onClick={() => deleteRemediation(t.id)} className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-destructive/10 text-destructive/60 hover:text-destructive transition-all">
+                              <X className="h-3 w-3" />
+                            </button>
+                          )}
+                        </div>
+                        <p className="text-sm text-foreground mb-2 leading-tight">{t.title}</p>
+                        {t.owner && (
+                          <div className="flex items-center gap-1 mt-2 pt-2 border-t border-border/30">
+                            <div className="h-5 w-5 rounded-full bg-primary/20 flex items-center justify-center text-[9px] text-primary font-bold">
+                              {t.owner.charAt(0).toUpperCase()}
+                            </div>
+                            <span className="text-[10px] text-muted-foreground">{t.owner}</span>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               ))}
             </div>
@@ -734,6 +1330,7 @@ export default function BotDetailPage() {
                 <div className="grid grid-cols-3 gap-2">
                   {['RESTORE','REFACTOR','REBUILD','REPLACE','RETIRE','HOLD'].map(r => (
                     <button key={r} onClick={() => setEditFields(p => ({ ...p, finalRecommendation: r }))}
+                      disabled={userRole === 'VIEWER'}
                       className={`px-4 py-3 rounded-lg text-sm font-medium border transition-all ${
                         editFields.finalRecommendation === r
                           ? 'bg-primary/15 border-primary/50 text-primary ring-1 ring-primary/30'
@@ -747,17 +1344,51 @@ export default function BotDetailPage() {
               <div>
                 <label className="text-xs text-muted-foreground mb-1 block">Review Summary</label>
                 <textarea value={editFields.reviewSummary || ''} onChange={e => setEditFields(p => ({ ...p, reviewSummary: e.target.value }))}
+                  disabled={userRole === 'VIEWER'}
                   rows={5} placeholder="Summarize the review findings and rationale for the recommendation..."
                   className="w-full px-3 py-2 bg-background border border-border/50 rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary/50" />
               </div>
-              <button onClick={() => saveBot({ ...editFields, reviewStatus: 'COMPLETED' })} disabled={saving}
-                className="w-full py-2.5 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-50 transition-all flex items-center justify-center gap-2">
-                <Save className="h-4 w-4" /> {saving ? 'Saving...' : 'Save & Complete Review'}
-              </button>
+              {userRole !== 'VIEWER' && (
+                <button onClick={() => saveBot({ ...editFields, reviewStatus: 'COMPLETED' })} disabled={saving}
+                  className="w-full py-2.5 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-50 transition-all flex items-center justify-center gap-2">
+                  <Save className="h-4 w-4" /> {saving ? 'Saving...' : 'Save & Complete Review'}
+                </button>
+              )}
             </div>
           </div>
         )}
+
       </div>
+
+      {/* ── AUDIT HISTORY ───────────────────────────────────────────── */}
+      {!loading && (
+        <div className="mt-8 rounded-xl border border-border/50 bg-card/80 p-5">
+          <h3 className="text-sm font-semibold mb-4">Audit History</h3>
+          <div className="space-y-3 max-h-64 overflow-y-auto pr-2">
+            {auditLogs.length === 0 ? (
+              <p className="text-xs text-muted-foreground">No audit logs found.</p>
+            ) : (
+              auditLogs.map((log: any) => (
+                <div key={log.id} className="flex justify-between items-start border-b border-border/30 pb-2">
+                  <div>
+                    <p className="text-xs font-medium text-foreground">{log.action}</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">
+                      {log.field && <span className="mr-2">Field: <span className="font-mono">{log.field}</span></span>}
+                      {log.oldValue && <span className="mr-2">From: <span className="font-mono">{log.oldValue}</span></span>}
+                      {log.newValue && <span>To: <span className="font-mono">{log.newValue}</span></span>}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-[10px] text-muted-foreground">{new Date(log.timestamp).toLocaleString()}</p>
+                    {log.userId && <p className="text-[10px] text-muted-foreground mt-0.5">By {log.userId}</p>}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
