@@ -1,15 +1,27 @@
-import { NextResponse } from "next/server";
-import prisma from "@/lib/db";
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/db";
+import { getSessionUser } from "@/lib/getSessionUser";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
-    const logs = await prisma.auditLog.findMany({
-      orderBy: { timestamp: "desc" },
-      take: 10,
+    const user = await getSessionUser();
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const notifications = await prisma.notification.findMany({
+      where: {
+        userId: user.id,
+      },
+      orderBy: {
+        createdAt: 'desc'
+      },
+      take: 20
     });
-    return NextResponse.json(logs);
-  } catch (error) {
-    console.error("GET /api/notifications error:", error);
-    return NextResponse.json({ error: "Failed to fetch notifications" }, { status: 500 });
+
+    return NextResponse.json(notifications);
+  } catch (e) {
+    console.error("GET /api/notifications error:", e);
+    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
   }
 }

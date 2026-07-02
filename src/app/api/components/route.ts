@@ -8,6 +8,9 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const search = searchParams.get("search");
     const status = searchParams.get("status");
+    const processFilter = searchParams.get("process");
+    const departmentFilter = searchParams.get("department");
+    const siteFilter = searchParams.get("site");
 
     const where: Record<string, unknown> = {};
 
@@ -21,6 +24,14 @@ export async function GET(request: NextRequest) {
 
     if (status) {
       where.status = status as ComponentStatus;
+    }
+
+    if (processFilter || departmentFilter || siteFilter) {
+      where.sourceBot = {
+        ...(processFilter && { businessProcess: processFilter }),
+        ...(departmentFilter && { department: departmentFilter }),
+        ...(siteFilter && { site: siteFilter }),
+      };
     }
 
     const components = await prisma.component.findMany({

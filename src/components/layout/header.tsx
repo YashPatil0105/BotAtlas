@@ -143,18 +143,42 @@ export function Header() {
     router.push(href);
   };
 
-  const toggleNotifications = async () => {
-    if (!showNotifications) {
-      try {
-        const res = await fetch('/api/notifications');
-        if (res.ok) {
-          setNotifications(await res.json());
-        }
-      } catch (e) {
-        console.error(e);
+  const fetchNotifications = async () => {
+    try {
+      const res = await fetch('/api/notifications');
+      if (res.ok) {
+        setNotifications(await res.json());
       }
+    } catch (e) {
+      console.error(e);
     }
+  };
+
+  useEffect(() => {
+    if (session?.user) {
+      fetchNotifications();
+      const interval = setInterval(fetchNotifications, 30000); // poll every 30s
+      return () => clearInterval(interval);
+    }
+  }, [session]);
+
+  const toggleNotifications = () => {
     setShowNotifications(!showNotifications);
+  };
+
+  const handleNotificationClick = async (notif: any) => {
+    try {
+      if (!notif.isRead) {
+        await fetch(`/api/notifications/${notif.id}/read`, { method: 'POST' });
+        setNotifications(prev => prev.map(n => n.id === notif.id ? { ...n, isRead: true } : n));
+      }
+      if (notif.link) {
+        setShowNotifications(false);
+        router.push(notif.link);
+      }
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   const toggleTheme = () => {
@@ -295,27 +319,35 @@ export function Header() {
         <div className="relative" ref={notifRef}>
           <button onClick={toggleNotifications} className="relative flex items-center justify-center w-9 h-9 rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
             <Bell className="w-4 h-4" />
-            <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-blue-500 rounded-full" />
+            {notifications.some(n => !n.isRead) && (
+              <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-blue-500 rounded-full" />
+            )}
           </button>
           
           {showNotifications && (
             <div className="absolute top-full mt-2 right-0 w-80 max-h-[80vh] overflow-y-auto bg-card border border-border/50 rounded-xl shadow-2xl z-50">
               <div className="p-3 border-b border-border/50 flex justify-between items-center bg-muted/20">
                 <h3 className="text-sm font-semibold">Notifications</h3>
-                <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Audit Log</span>
               </div>
               <div className="p-2 space-y-1">
                 {notifications.length === 0 ? (
                   <div className="p-4 text-center text-sm text-muted-foreground">No recent activity</div>
                 ) : (
                   notifications.map((n: any) => (
-                    <div key={n.id} className="p-2 rounded-lg hover:bg-white/5 transition-colors border-l-2 border-transparent hover:border-blue-500">
-                      <p className="text-xs font-medium text-foreground">{n.action} <span className="text-muted-foreground font-normal">{n.entityType}</span></p>
-                      <div className="flex justify-between items-center mt-1">
-                        <span className="text-[10px] text-muted-foreground font-mono truncate max-w-[150px]">{n.entityId}</span>
-                        <span className="text-[10px] text-muted-foreground">{new Date(n.timestamp).toLocaleTimeString()}</span>
+                    <button
+                      key={n.id}
+                      onClick={() => handleNotificationClick(n)}
+                      className={cn(
+                        "w-full text-left p-3 rounded-lg transition-colors border-l-2",
+                        n.isRead ? "border-transparent hover:bg-white/5 opacity-70" : "border-blue-500 bg-blue-500/5 hover:bg-blue-500/10"
+                      )}
+                    >
+                      <p className="text-xs font-semibold text-foreground">{n.title}</p>
+                      <p className="text-[11px] text-muted-foreground mt-1 line-clamp-2">{n.message}</p>
+                      <div className="text-[9px] text-muted-foreground mt-2 text-right">
+                        {new Date(n.createdAt).toLocaleString()}
                       </div>
-                    </div>
+                    </button>
                   ))
                 )}
               </div>

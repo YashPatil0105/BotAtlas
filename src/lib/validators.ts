@@ -7,18 +7,18 @@ export const loginSchema = z.object({
 
 export const botCreateSchema = z.object({
   name: z.string().min(1, "Bot name is required"),
-  vendor: z.string().optional(),
+  vendor: z.string().optional().nullable(),
   technology: z.enum(["PAD", "POWER_AUTOMATE_CLOUD", "UI_PATH", "BLUE_PRISM", "AUTOMATION_ANYWHERE", "OTHER"]).default("PAD"),
-  department: z.string().optional(),
+  department: z.string().optional().nullable(),
   currentStatus: z.enum(["UNKNOWN", "ACTIVE", "FAILED", "INACTIVE", "OBSOLETE", "RETIRED"]).default("UNKNOWN"),
   criticality: z.enum(["CRITICAL", "HIGH", "MEDIUM", "LOW"]).default("MEDIUM"),
   environment: z.enum(["DEFAULT", "DEV", "UAT", "PROD", "UNKNOWN"]).default("UNKNOWN"),
-  businessPurpose: z.string().optional(),
-  businessProcess: z.string().optional(),
-  businessOwner: z.string().optional(),
-  technicalOwner: z.string().optional(),
-  scheduleOrTrigger: z.string().optional(),
-  reviewSummary: z.string().optional(),
+  businessPurpose: z.string().optional().nullable(),
+  businessProcess: z.string().optional().nullable(),
+  businessOwner: z.string().optional().nullable(),
+  technicalOwner: z.string().optional().nullable(),
+  scheduleOrTrigger: z.string().optional().nullable(),
+  reviewSummary: z.string().optional().nullable(),
   finalRecommendation: z.enum(["RESTORE", "REFACTOR", "REBUILD", "REPLACE", "RETIRE", "HOLD"]).optional().nullable(),
   reviewStatus: z.enum(["NOT_STARTED", "IN_PROGRESS", "COMPLETED", "AWAITING_VALIDATION"]).optional(),
   
@@ -42,6 +42,7 @@ export const botCreateSchema = z.object({
   server: z.string().optional().nullable(),
   botExecutionUserId: z.string().optional().nullable(),
   docsLinks: z.string().optional().nullable(),
+  docsUploaded: z.boolean().optional().default(false),
 });
 
 export const botStepSchema = z.object({

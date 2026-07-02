@@ -9,7 +9,7 @@ import {
   ArrowLeft, Save, Trash2, Plus, Minus, GripVertical, X,
   CheckCircle2, AlertTriangle, Shield, FileText, GitBranch,
   ClipboardList, Bug, Upload, Wrench, MessageSquare, Activity, Copy,
-  Paperclip, FileUp, Briefcase, Server, Calendar, Users, ExternalLink, Globe, Zap, Clock, Hash, BarChart3
+  Paperclip, FileUp, Briefcase, Server, Calendar, Users, ExternalLink, Globe, Zap, Clock, Hash, BarChart3, Play, RefreshCw, Check, ArrowUpRight, ShieldAlert, XCircle
 } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 import {
@@ -59,6 +59,7 @@ interface BotDetail {
 
 const TABS = [
   { id: 'overview', label: 'Overview', icon: FileText },
+  { id: 'execution', label: 'Suggested Execution', icon: Play },
   { id: 'steps', label: 'Process Steps', icon: GitBranch },
   { id: 'dependencies', label: 'Dependencies', icon: Activity },
   { id: 'checklist', label: 'Checklist', icon: ClipboardList },
@@ -151,6 +152,16 @@ export default function BotDetailPage() {
   const [activeTab, setActiveTab] = useState('overview');
   const [saving, setSaving] = useState(false);
   const [cloning, setCloning] = useState(false);
+
+  // --- EXECUTION ENGINE STATES ---
+  const [suggestionState, setSuggestionState] = useState<'loading' | 'free' | 'queued' | 'access_denied' | 'not_deployed' | null>(null);
+  const [suggestionData, setSuggestionData] = useState<any>(null);
+  const [activeCheckoutSession, setActiveCheckoutSession] = useState<any>(null);
+  const [executionLogs, setExecutionLogs] = useState<any[]>([]);
+  const [executionLogPage, setExecutionLogPage] = useState(1);
+  const [auditLogPage, setAuditLogPage] = useState(1);
+  const [checkingAvailability, setCheckingAvailability] = useState(false);
+  const [accessRequesting, setAccessRequesting] = useState(false);
   const [cloneConfirmOpen, setCloneConfirmOpen] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<{ type: string; id: string; label: string } | null>(null);
   const [checklistFindingSuggestion, setChecklistFindingSuggestion] = useState<{ category: string; observation: string; priority: string } | null>(null);
@@ -162,11 +173,11 @@ export default function BotDetailPage() {
   const [evidenceType, setEvidenceType] = useState('SCREENSHOT');
 
   // Sub-entity add states
-  const [newStep, setNewStep] = useState({ actionType: 'OTHER', description: '', systemName: '', tags: [] as string[] });
+  const [newStep, setNewStep] = useState({ actionType: 'OTHER', description: '', systemName: '', moduleName: '', tags: [] as string[] });
   const [newDep, setNewDep] = useState({ dependencyType: 'OTHER', name: '' });
-  const [newFinding, setNewFinding] = useState({ category: 'DOCUMENTATION', observation: '', priority: 'MEDIUM' });
+  const [newFinding, setNewFinding] = useState({ category: 'DOCUMENTATION', observation: '', priority: 'MEDIUM', owner: '' });
   const [newRootCause, setNewRootCause] = useState({ failurePoint: '', category: 'UNKNOWN', probableCause: '' });
-  const [newRemediation, setNewRemediation] = useState({ title: '', priority: 'MEDIUM', owner: '' });
+  const [newRemediation, setNewRemediation] = useState({ title: '', priority: 'MEDIUM', owner: '', findingId: '' });
   const [stepMatches, setStepMatches] = useState<any[]>([]);
   const [stepViewMode, setStepViewMode] = useState<'list' | 'visual'>('list');
   const [depViewMode, setDepViewMode] = useState<'list' | 'graph'>('list');
@@ -235,6 +246,157 @@ export default function BotDetailPage() {
   }, [botId]);
 
   useEffect(() => { fetchBot(); }, [fetchBot]);
+
+  const checkCurrentQueueStatus = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/execution/queue?botId=${botId}`);
+      const data = await res.json();
+      if (res.ok) {
+        if (data.activeLock) {
+          setSuggestionState('free');
+          setActiveCheckoutSession(data.activeLock);
+          setSuggestionData({
+            message: 'Session restored: You already have this session checked out.',
+            session: data.activeLock
+          });
+          return;
+        }
+
+        if (data.myEntry) {
+          const entry = data.myEntry;
+          if (entry.status === 'ASSIGNED') {
+            setSuggestionState('free');
+            setSuggestionData({
+              message: 'Your queue slot is ready!',
+              session: entry.session
+            });
+          } else if (entry.status === 'QUEUED') {
+            setSuggestionState('queued');
+            setSuggestionData({
+              message: `All sessions busy — you are position #${entry.queuePosition} in the queue.`,
+              queuePosition: entry.queuePosition,
+              estWaitMinutes: entry.queuePosition * 8
+            });
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Error checking active queue:', e);
+    }
+  }, [botId]);
+
+  const fetchExecutionLogs = async () => {
+    try {
+      const res = await fetch(`/api/execution/logs?botId=${botId}`);
+      if (res.ok) setExecutionLogs(await res.json());
+    } catch (e) {
+      console.error('Error fetching logs:', e);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'execution') {
+      checkCurrentQueueStatus();
+      fetchExecutionLogs();
+    }
+  }, [activeTab, checkCurrentQueueStatus]);
+
+  const checkSessionAvailability = async () => {
+    setCheckingAvailability(true);
+    setSuggestionState('loading');
+    setSuggestionData(null);
+    try {
+      const res = await fetch(`/api/execution/suggest?botId=${botId}`);
+      const data = await res.json();
+      if (res.ok) {
+        if (data.status === 'FREE') {
+          setSuggestionState('free');
+          setSuggestionData(data);
+        } else if (data.status === 'QUEUED') {
+          setSuggestionState('queued');
+          setSuggestionData(data);
+        } else if (data.status === 'ASSIGNED') {
+          setSuggestionState('free');
+          setSuggestionData(data);
+        } else if (data.status === 'ACCESS_DENIED') {
+          setSuggestionState('access_denied');
+          setSuggestionData(data);
+        } else if (data.status === 'NOT_DEPLOYED') {
+          setSuggestionState('not_deployed');
+          setSuggestionData(data);
+        }
+      } else {
+        toast({ title: 'Error checking availability', description: data.error || 'Request failed.', variant: 'destructive' });
+        setSuggestionState(null);
+      }
+    } catch (e) {
+      console.error(e);
+      setSuggestionState(null);
+    } finally {
+      setCheckingAvailability(false);
+    }
+  };
+
+  const checkoutSession = async (sessionId: string) => {
+    try {
+      const res = await fetch('/api/execution/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ botId, sessionId }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        toast({ title: 'Session Checked Out', description: 'Locked session for execution. Please check in when completed.' });
+        setActiveCheckoutSession(suggestionData?.session || null);
+      } else {
+        toast({ title: 'Checkout Failed', description: data.error || 'Failed to checkout session.', variant: 'destructive' });
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const checkinSession = async (sessionId: string, cancel: boolean = false) => {
+    try {
+      const res = await fetch('/api/execution/checkin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId, cancel }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        toast({ title: cancel ? 'Session Cancelled' : 'Session Checked In', description: cancel ? 'Run was cancelled and session released.' : 'Session released successfully.' });
+        setActiveCheckoutSession(null);
+        setSuggestionState(null);
+        setSuggestionData(null);
+        fetchExecutionLogs();
+      } else {
+        toast({ title: 'Checkin Failed', description: data.error || 'Failed to release session.', variant: 'destructive' });
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const leaveQueue = async () => {
+    try {
+      const res = await fetch('/api/execution/queue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ botId, action: 'leave' }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        toast({ title: 'Left Queue', description: 'You have successfully cancelled your queue request.' });
+        setSuggestionState(null);
+        setSuggestionData(null);
+      } else {
+        toast({ title: 'Leave Queue Failed', description: data.error || 'Failed to leave queue.', variant: 'destructive' });
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   useEffect(() => {
     const text = (newStep.description + " " + newStep.systemName).toLowerCase();
@@ -346,7 +508,7 @@ export default function BotDetailPage() {
     if (res.ok) {
       const data = await res.json();
       if (data.matchingSteps) setStepMatches(data.matchingSteps);
-      setNewStep({ actionType: 'OTHER', description: '', systemName: '', tags: [] });
+      setNewStep({ actionType: 'OTHER', description: '', systemName: '', moduleName: '', tags: [] });
       toast({ title: "Step Added", description: "Successfully added step to the workflow." });
       fetchBot();
     } else {
@@ -451,7 +613,7 @@ export default function BotDetailPage() {
           priority: newFinding.priority,
         });
       }
-      setNewFinding({ category: 'DOCUMENTATION', observation: '', priority: 'MEDIUM' });
+      setNewFinding({ category: 'DOCUMENTATION', observation: '', priority: 'MEDIUM', owner: '' });
       fetchBot();
     } else {
       toast({ title: "Error Recording Finding", description: "Failed to record finding.", variant: "destructive" });
@@ -539,7 +701,7 @@ export default function BotDetailPage() {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newRemediation),
     });
     if (res.ok) {
-      setNewRemediation({ title: '', priority: 'MEDIUM', owner: '' });
+      setNewRemediation({ title: '', priority: 'MEDIUM', owner: '', findingId: '' });
       toast({ title: "Task Added", description: "Successfully added remediation task." });
       fetchBot();
     } else {
@@ -820,10 +982,22 @@ export default function BotDetailPage() {
               )}
 
               {userRole === 'ADMIN' && (
-                <button onClick={handleClone} disabled={cloning}
-                  className="flex items-center gap-2 px-4 py-2.5 bg-card hover:bg-muted border border-border/50 rounded-xl text-sm font-medium disabled:opacity-50 transition-all hover:scale-[1.02] active:scale-[0.98] shadow-sm">
-                  <Copy className="h-4 w-4 text-primary" /> {cloning ? 'Cloning...' : 'Clone Bot'}
-                </button>
+                <div className="flex items-center gap-2">
+                  <button onClick={handleClone} disabled={cloning}
+                    className="flex items-center gap-2 px-4 py-2.5 bg-card hover:bg-muted border border-border/50 rounded-xl text-sm font-medium disabled:opacity-50 transition-all hover:scale-[1.02] active:scale-[0.98] shadow-sm">
+                    <Copy className="h-4 w-4 text-primary" /> {cloning ? 'Cloning...' : 'Clone Bot'}
+                  </button>
+                  {bot.currentStatus !== 'RETIRED' && bot.currentStatus !== 'OBSOLETE' && (
+                    <button onClick={() => {
+                        if (window.confirm("Are you sure you want to decommission this bot? This will remove all server mappings, assignments, and execution queues.")) {
+                          saveBot({ ...editFields, currentStatus: 'RETIRED' });
+                        }
+                      }}
+                      className="flex items-center gap-2 px-4 py-2.5 bg-destructive/10 hover:bg-destructive/20 text-destructive border border-destructive/30 rounded-xl text-sm font-medium transition-all hover:scale-[1.02] active:scale-[0.98] shadow-sm">
+                      <XCircle className="h-4 w-4" /> Decommission
+                    </button>
+                  )}
+                </div>
               )}
             </div>
           </div>
@@ -956,8 +1130,7 @@ export default function BotDetailPage() {
                           </button>
                         ))}
                       </div>
-                      {userRole !== 'VIEWER' && (
-                        <div className="space-y-2 border-t border-border/30 pt-3">
+                        <div className="space-y-2 border-t border-border/30 pt-3 mt-4">
                           <label className="text-[10px] text-muted-foreground uppercase tracking-wider font-bold">Edit Links</label>
                           {['SOP', 'BRD', 'FSD', 'Other'].map(type => (
                             <div key={type} className="flex items-center gap-2">
@@ -969,11 +1142,16 @@ export default function BotDetailPage() {
                                   else delete newDocs[type];
                                   setEditFields(p => ({ ...p, docsLinks: Object.keys(newDocs).length ? JSON.stringify(newDocs) : null }));
                                 }}
-                                className="flex-1 px-2.5 py-1.5 bg-background border border-border/50 rounded-md text-xs focus:outline-none focus:ring-1 focus:ring-primary/50 transition-all" />
+                                className="flex-1 px-2.5 py-1.5 bg-background border border-border/50 rounded-md text-xs focus:outline-none focus:ring-1 focus:ring-primary/50 transition-all disabled:opacity-50" />
                             </div>
                           ))}
+                          <div className="flex items-center gap-2 mt-4">
+                            <input type="checkbox" id="docsUploaded" checked={editFields['docsUploaded'] || false}
+                              onChange={e => setEditFields(p => ({ ...p, docsUploaded: e.target.checked }))}
+                              className="w-4 h-4 rounded border-border/50 bg-background text-primary focus:ring-primary/50" />
+                            <label htmlFor="docsUploaded" className="text-sm font-medium text-foreground">All Required Documents Uploaded</label>
+                          </div>
                         </div>
-                      )}
                     </div>
                   );
                 })()}
@@ -1061,12 +1239,316 @@ export default function BotDetailPage() {
               </div>
 
               {/* Save Button */}
-              {userRole !== 'VIEWER' && (
-                <button onClick={() => saveBot(editFields)} disabled={saving}
-                  className="w-full py-3 bg-primary text-primary-foreground rounded-xl text-sm font-semibold hover:bg-primary/90 disabled:opacity-50 transition-all flex items-center justify-center gap-2 shadow-lg shadow-primary/20">
-                  <Save className="h-4 w-4" /> {saving ? 'Saving...' : 'Save All Changes'}
+              <button onClick={() => saveBot(editFields)} disabled={saving}
+                className="w-full py-3 bg-primary text-primary-foreground rounded-xl text-sm font-semibold hover:bg-primary/90 disabled:opacity-50 transition-all flex items-center justify-center gap-2 shadow-lg shadow-primary/20">
+                <Save className="h-4 w-4" /> {saving ? 'Saving...' : 'Save All Changes'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* SUGGESTED EXECUTION TAB */}
+        {activeTab === 'execution' && (
+          <div className="rounded-2xl border border-border/50 bg-card/80 backdrop-blur p-6 shadow-lg max-w-3xl mx-auto space-y-6 animate-fade-in">
+            <div className="text-center space-y-2 border-b border-border/30 pb-5">
+              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 border border-primary/20 text-primary">
+                <Play className="h-6 w-6" />
+              </div>
+              <h2 className="text-lg font-bold text-foreground">Suggested Execution Session</h2>
+              <p className="text-sm text-muted-foreground max-w-xl mx-auto">
+                Attended bot suggestion system. BotAtlas evaluates active session occupancies and load-balances across the 6 approved USFB servers.
+              </p>
+            </div>
+
+            {/* NULL State - Click to suggest */}
+            {suggestionState === null && (
+              <div className="flex flex-col items-center justify-center py-10 space-y-4">
+                <div className="p-3.5 rounded-full bg-white/5 border border-white/10 animate-pulse">
+                  <Activity className="h-6 w-6 text-muted-foreground" />
+                </div>
+                <div className="text-center">
+                  <p className="text-sm text-muted-foreground font-medium">Verify live session availability and claim an execution slot.</p>
+                </div>
+                <button
+                  onClick={checkSessionAvailability}
+                  className="px-5 py-2.5 bg-primary hover:bg-primary/90 text-primary-foreground font-semibold text-sm rounded-lg shadow-md transition-colors cursor-pointer"
+                >
+                  Check Session Availability
                 </button>
-              )}
+              </div>
+            )}
+
+            {/* LOADING State */}
+            {suggestionState === 'loading' && (
+              <div className="flex flex-col items-center justify-center py-10 space-y-4">
+                <RefreshCw className="h-8 w-8 text-primary animate-spin" />
+                <p className="text-sm text-muted-foreground">Evaluating session loads and verifying entitlements...</p>
+              </div>
+            )}
+
+            {/* FREE State (Has suggestion) */}
+            {suggestionState === 'free' && suggestionData?.session && (
+              <div className="space-y-6 py-2">
+                {activeCheckoutSession ? (
+                  // Checked out UI
+                  <div className="border border-emerald-500/20 bg-emerald-500/5 rounded-xl p-5 space-y-4">
+                    <div className="flex items-center gap-3">
+                      <div className="h-10 w-10 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+                        <Check className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-bold text-emerald-400">Session Checked Out & Running</h4>
+                        <p className="text-xs text-muted-foreground mt-0.5">Your RDP slot is locked. Execute the attended bot in the Remote Desktop window.</p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-4 bg-slate-950/60 p-4 rounded-lg border border-border/30 text-xs">
+                      <div>
+                        <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider block">Server</span>
+                        <span className="font-semibold text-foreground mt-1 block">{activeCheckoutSession.serverName}</span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider block">Session</span>
+                        <span className="font-semibold text-foreground mt-1 block">{activeCheckoutSession.sessionName}</span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider block">PAM User ID</span>
+                        <span className="font-semibold font-mono text-emerald-400 mt-1 block bg-emerald-500/10 px-2 py-0.5 rounded w-max">{activeCheckoutSession.pamUserId}</span>
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end gap-3 pt-2">
+                      <button
+                        onClick={() => checkinSession(activeCheckoutSession.id, true)}
+                        className="px-4 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/20 font-semibold text-xs rounded-lg shadow-sm transition-colors cursor-pointer"
+                      >
+                        Cancel Run
+                      </button>
+                      <button
+                        onClick={() => checkinSession(activeCheckoutSession.id, false)}
+                        className="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white font-semibold text-xs rounded-lg shadow-sm transition-colors cursor-pointer"
+                      >
+                        Complete Run & Release Session
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  // Available suggestion UI
+                  <div className="border border-indigo-500/20 bg-indigo-500/5 rounded-xl p-5 space-y-4">
+                    <div className="flex items-center gap-3">
+                      <div className="h-10 w-10 rounded-full bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
+                        <ArrowUpRight className="h-5 w-5 animate-pulse" />
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-bold text-indigo-400">Suggested Session Allocation Found</h4>
+                        <p className="text-xs text-muted-foreground mt-0.5">Please check out the session below to lock the slot before starting your run.</p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-4 bg-slate-950/60 p-4 rounded-lg border border-border/30 text-xs">
+                      <div>
+                        <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider block">Suggested Server</span>
+                        <span className="font-semibold text-foreground mt-1 block">{suggestionData.session.serverName}</span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider block">Suggested Session</span>
+                        <span className="font-semibold text-foreground mt-1 block">{suggestionData.session.sessionName}</span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider block">PAM User ID</span>
+                        <span className="font-semibold font-mono text-indigo-400 mt-1 block bg-indigo-500/10 px-2 py-0.5 rounded w-max">{suggestionData.session.pamUserId}</span>
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end gap-3 pt-2">
+                      <button
+                        onClick={checkSessionAvailability}
+                        className="px-4 py-2 bg-white/5 hover:bg-white/10 text-foreground font-semibold text-xs rounded-lg transition-colors border border-border/50 cursor-pointer"
+                      >
+                        Re-evaluate
+                      </button>
+                      <button
+                        onClick={() => checkoutSession(suggestionData.session.id)}
+                        className="px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground font-semibold text-xs rounded-lg shadow-sm transition-colors cursor-pointer animate-pulse"
+                      >
+                        Claim & Check Out Session
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* QUEUED State */}
+            {suggestionState === 'queued' && (
+              <div className="border border-amber-500/20 bg-amber-500/5 rounded-xl p-5 space-y-5 text-center py-8">
+                <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400">
+                  <Clock className="h-6 w-6 animate-pulse" />
+                </div>
+                <div className="space-y-1">
+                  <h4 className="text-base font-bold text-amber-400">All Sessions Currently Busy</h4>
+                  <p className="text-xs text-muted-foreground max-w-md mx-auto">
+                    All servers mapped with this bot are occupied. You have been queued and will be promoted the instant a slot is checked in.
+                  </p>
+                </div>
+
+                <div className="flex justify-center gap-8 max-w-sm mx-auto bg-slate-950/60 p-4 rounded-lg border border-border/30">
+                  <div>
+                    <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider block">Queue Position</span>
+                    <span className="text-2xl font-bold text-amber-400 mt-1 block">#{suggestionData?.queuePosition || 1}</span>
+                  </div>
+                  <div className="border-r border-border/30" />
+                  <div>
+                    <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider block">Est. Wait Time</span>
+                    <span className="text-2xl font-bold text-foreground mt-1 block">~{suggestionData?.estWaitMinutes || 8} min</span>
+                  </div>
+                </div>
+
+                <div className="flex justify-center gap-3 pt-2">
+                  <button
+                    onClick={checkSessionAvailability}
+                    className="px-4 py-2 bg-white/5 hover:bg-white/10 text-foreground font-semibold text-xs rounded-lg transition-colors border border-border/50 cursor-pointer"
+                  >
+                    Refresh Queue Position
+                  </button>
+                  <button
+                    onClick={leaveQueue}
+                    className="px-4 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 font-semibold text-xs rounded-lg transition-colors cursor-pointer"
+                  >
+                    Leave Queue
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* ACCESS DENIED State */}
+            {suggestionState === 'access_denied' && (
+              <div className="border border-red-500/20 bg-red-500/5 rounded-xl p-5 space-y-4 text-center py-8">
+                <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-red-500/10 border border-red-500/20 text-red-400">
+                  <ShieldAlert className="h-6 w-6" />
+                </div>
+                <div className="space-y-1">
+                  <h4 className="text-sm font-bold text-red-400">Access Entitlement Denied</h4>
+                  <p className="text-xs text-muted-foreground max-w-md mx-auto">
+                    You do not have an active assignment for this bot in the Access Management registry. You must request approval before you can suggest executions.
+                  </p>
+                </div>
+                <div className="flex justify-center gap-3 pt-2">
+                  <button
+                    onClick={async () => {
+                      setAccessRequesting(true);
+                      try {
+                        const res = await fetch('/api/access/requests', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ botId: bot.id })
+                        });
+                        const data = await res.json();
+                        if (res.ok) {
+                          toast({ title: 'Access Request Submitted', description: 'Your request was sent to the administration team.' });
+                          setSuggestionState('queued'); // Mocking it as queued/pending
+                        } else {
+                          toast({ title: 'Request Failed', description: data.error, variant: 'destructive' });
+                        }
+                      } catch (e) {
+                        toast({ title: 'Error', description: 'Network error', variant: 'destructive' });
+                      } finally {
+                        setAccessRequesting(false);
+                      }
+                    }}
+                    disabled={accessRequesting}
+                    className="px-4 py-2 bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white font-semibold text-xs rounded-lg transition-colors shadow-sm cursor-pointer flex items-center gap-2"
+                  >
+                    {accessRequesting && <div className="w-3 h-3 rounded-full border-2 border-white border-t-transparent animate-spin" />}
+                    Request Run Access
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* NOT DEPLOYED State */}
+            {suggestionState === 'not_deployed' && (
+              <div className="border border-red-500/20 bg-red-500/5 rounded-xl p-5 space-y-4 text-center py-8">
+                <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-red-500/10 border border-red-500/20 text-red-400">
+                  <Server className="h-6 w-6" />
+                </div>
+                <div className="space-y-1">
+                  <h4 className="text-sm font-bold text-red-400">Bot Not Deployed</h4>
+                  <p className="text-xs text-muted-foreground max-w-md mx-auto">
+                    This bot has not been mapped or deployed to any PAM server sessions. Please register a deployment request in the Governance Center.
+                  </p>
+                </div>
+                <div className="flex justify-center gap-3 pt-2">
+                  <Link
+                    href="/dashboard/governance"
+                    className="px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground font-semibold text-xs rounded-lg transition-colors shadow-sm inline-block cursor-pointer"
+                  >
+                    Go to Governance Center
+                  </Link>
+                </div>
+              </div>
+            )}
+            {/* Session Activity Logs */}
+            <div className="mt-8 pt-8 border-t border-border/30">
+              <h3 className="text-sm font-bold flex items-center gap-2 mb-4">
+                <FileText className="w-4 h-4 text-primary" /> Execution Activity Logs
+              </h3>
+              <div className="bg-card border border-border/50 rounded-xl overflow-hidden">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-muted/30 border-b border-border/50 text-muted-foreground uppercase tracking-wider">
+                    <tr>
+                      <th className="px-4 py-2.5 font-semibold">Time</th>
+                      <th className="px-4 py-2.5 font-semibold">User</th>
+                      <th className="px-4 py-2.5 font-semibold">Action</th>
+                      <th className="px-4 py-2.5 font-semibold">Details</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/20">
+                    {executionLogs.slice((executionLogPage - 1) * 10, executionLogPage * 10).map((log: any) => (
+                      <tr key={log.id} className="hover:bg-white/[0.02]">
+                        <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">
+                          {new Date(log.timestamp).toLocaleString()}
+                        </td>
+                        <td className="px-4 py-3 font-medium text-foreground">
+                          {log.user?.name || 'System'}
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            log.action === 'CHECKOUT' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' :
+                            log.action === 'CHECKIN' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' :
+                            log.action === 'QUEUE_ENTER' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' :
+                            log.action === 'ACCESS_DENIED' ? 'bg-red-500/10 text-red-400 border border-red-500/20' :
+                            'bg-muted text-foreground border border-border/50'
+                          }`}>
+                            {log.action}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-muted-foreground">
+                          {log.details}
+                        </td>
+                      </tr>
+                    ))}
+                    {executionLogs.length === 0 && (
+                      <tr>
+                        <td colSpan={4} className="px-4 py-6 text-center text-muted-foreground">
+                          No execution activity logged for this bot.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+                {executionLogs.length > 10 && (
+                  <div className="px-4 py-3 border-t border-border/50 bg-muted/10 flex items-center justify-between">
+                    <span className="text-xs text-muted-foreground">
+                      Showing {(executionLogPage - 1) * 10 + 1} to {Math.min(executionLogPage * 10, executionLogs.length)} of {executionLogs.length} logs
+                    </span>
+                    <div className="flex gap-2">
+                      <button onClick={() => setExecutionLogPage(p => Math.max(1, p - 1))} disabled={executionLogPage === 1} className="px-3 py-1 bg-background border border-border/50 rounded hover:bg-muted disabled:opacity-50 text-xs">Previous</button>
+                      <button onClick={() => setExecutionLogPage(p => p + 1)} disabled={executionLogPage * 10 >= executionLogs.length} className="px-3 py-1 bg-background border border-border/50 rounded hover:bg-muted disabled:opacity-50 text-xs">Next</button>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         )}
@@ -1078,13 +1560,19 @@ export default function BotDetailPage() {
             {userRole !== 'VIEWER' && (
               <div className="rounded-xl border border-border/50 bg-card/80 p-4">
                 <h3 className="text-sm font-semibold mb-3">Add Process Step</h3>
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
                 <div>
                   <label className="text-xs text-muted-foreground mb-1 block">Action Type</label>
                   <select value={newStep.actionType} onChange={e => setNewStep(p => ({ ...p, actionType: e.target.value }))}
                     className="w-full px-3 py-2 bg-background border border-border/50 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/50">
                     {ACTION_TYPES.map(a => <option key={a} value={a}>{a.replace(/_/g, ' ')}</option>)}
                   </select>
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground mb-1 block">Subflow / Module</label>
+                  <input type="text" value={newStep.moduleName} onChange={e => setNewStep(p => ({ ...p, moduleName: e.target.value }))}
+                    placeholder="e.g., Login Flow"
+                    className="w-full px-3 py-2 bg-background border border-border/50 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/50" />
                 </div>
                 <div className="md:col-span-2">
                   <label className="text-xs text-muted-foreground mb-1 block">Description</label>
@@ -1198,11 +1686,11 @@ export default function BotDetailPage() {
                   <div className="text-center py-8 text-muted-foreground text-sm rounded-xl border border-dashed border-border/50 w-full">
                     No process steps added yet. Add steps above to document the bot&apos;s workflow.
                   </div>
-                ) : bot.steps.map((step: any, i: number) => {
-                  const isLast = i === bot.steps.length - 1;
-                  return (
+                ) : (() => {
+                  const hasSubflows = bot.steps.some((s: any) => s.moduleName && s.moduleName.trim() !== '');
+                  
+                  const renderStep = (step: any, i: number, isLast: boolean) => (
                     <div key={step.id} className="flex items-center gap-6 flex-shrink-0 animate-fade-in">
-                      {/* Step Card */}
                       <div 
                         draggable={userRole !== 'VIEWER'}
                         onDragStart={(e) => handleStepDragStart(e, i)}
@@ -1238,7 +1726,6 @@ export default function BotDetailPage() {
                         )}
                       </div>
 
-                      {/* Connector Arrow */}
                       {!isLast && (
                         <div className="flex items-center justify-center text-muted-foreground/30">
                           <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
@@ -1248,7 +1735,42 @@ export default function BotDetailPage() {
                       )}
                     </div>
                   );
-                })}
+
+                  if (!hasSubflows) {
+                    return bot.steps.map((step: any, i: number) => renderStep(step, i, i === bot.steps.length - 1));
+                  } else {
+                    const groups: { module: string; steps: { step: any, index: number }[] }[] = [];
+                    let currentModule: string | null = null;
+                    let currentGroup: { step: any, index: number }[] = [];
+                    bot.steps.forEach((step: any, index: number) => {
+                      const mod = (step.moduleName && step.moduleName.trim() !== '') ? step.moduleName : 'Main Flow';
+                      if (mod !== currentModule) {
+                        if (currentGroup.length > 0) {
+                          groups.push({ module: currentModule || 'Main Flow', steps: currentGroup });
+                        }
+                        currentModule = mod;
+                        currentGroup = [{ step, index }];
+                      } else {
+                        currentGroup.push({ step, index });
+                      }
+                    });
+                    if (currentGroup.length > 0) {
+                      groups.push({ module: currentModule || 'Main Flow', steps: currentGroup });
+                    }
+                    
+                    return groups.map((g, gi) => (
+                      <div key={gi} className="flex flex-col gap-4 border border-border/40 p-5 rounded-xl bg-card/20 min-w-max shrink-0 relative group">
+                        <div className="flex items-center gap-2">
+                          <div className="h-2 w-2 rounded-full bg-primary animate-pulse" />
+                          <h4 className="text-sm font-bold text-foreground/90 uppercase tracking-widest">{g.module}</h4>
+                        </div>
+                        <div className="flex items-center gap-6">
+                          {g.steps.map(({ step, index }, si) => renderStep(step, index, si === g.steps.length - 1))}
+                        </div>
+                      </div>
+                    ));
+                  }
+                })()}
               </div>
             )}
           </div>
@@ -1395,9 +1917,30 @@ export default function BotDetailPage() {
         {/* CHECKLIST TAB */}
         {activeTab === 'checklist' && (
           <div className="rounded-xl border border-border/50 bg-card/80 p-5">
-            <h3 className="text-sm font-semibold mb-4">Technical Review Checklist</h3>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-semibold">Technical & GRC Review Checklist</h3>
+              {userRole !== 'VIEWER' && (
+                <button
+                  onClick={async () => {
+                    const res = await fetch(`/api/bots/${bot.id}/checklist/auto`, { method: 'POST' });
+                    if (res.ok) fetchBot();
+                  }}
+                  className="px-3 py-1.5 bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20 border border-indigo-500/20 rounded-md text-xs font-semibold transition-all"
+                >
+                  Auto-Generate GRC Items
+                </button>
+              )}
+            </div>
             <div className="space-y-2">
-              {CHECKLIST_ITEMS.map(item => {
+              {(() => {
+                const standardKeys = new Set(CHECKLIST_ITEMS.map(i => i.key));
+                const dynamicItems = bot.checklist
+                  .filter((c: any) => !standardKeys.has(c.checklistItem))
+                  .map((c: any) => ({ key: c.checklistItem, label: c.checklistItem }));
+                
+                const allItems = [...CHECKLIST_ITEMS, ...dynamicItems];
+
+                return allItems.map(item => {
                 const existing = bot.checklist.find((c: any) => c.checklistItem === item.key);
                 const val = existing?.value || 'NOT_VERIFIED';
                 return (
@@ -1421,7 +1964,8 @@ export default function BotDetailPage() {
                     </div>
                   </div>
                 );
-              })}
+              });
+              })()}
             </div>
           </div>
         )}
@@ -1495,6 +2039,12 @@ export default function BotDetailPage() {
                     {FINDING_CATEGORIES.map(c => <option key={c} value={c}>{c.replace(/_/g, ' ')}</option>)}
                   </select>
                 </div>
+                <div>
+                  <label className="text-xs text-muted-foreground mb-1 block">Owner</label>
+                  <input type="text" value={newFinding.owner || ''} onChange={e => setNewFinding(p => ({ ...p, owner: e.target.value }))}
+                    placeholder="e.g., Security Team"
+                    className="w-full px-3 py-2 bg-background border border-border/50 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/50" />
+                </div>
                 <div className="sm:col-span-2">
                   <label className="text-xs text-muted-foreground mb-1 block">Observation</label>
                   <input type="text" value={newFinding.observation} onChange={e => setNewFinding(p => ({ ...p, observation: e.target.value }))}
@@ -1535,7 +2085,19 @@ export default function BotDetailPage() {
                           {['OPEN','IN_PROGRESS','BLOCKED','CLOSED'].map(s => <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>)}
                         </select>
                       </div>
-                      <p className="text-sm">{f.observation}</p>
+                      <p className="text-sm mb-1">{f.observation}</p>
+                      <div className="flex flex-wrap items-center gap-2 mt-2">
+                        {f.owner && (
+                          <div className="flex items-center gap-1 text-[10px] text-muted-foreground bg-muted/30 px-2 py-0.5 rounded border border-border/30">
+                            <span className="font-semibold text-foreground/70">Owner:</span> {f.owner}
+                          </div>
+                        )}
+                        {f.remediationTasks?.length > 0 && (
+                          <div className="flex items-center gap-1 text-[10px] text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20">
+                            <span className="font-semibold">Linked Tasks:</span> {f.remediationTasks.length}
+                          </div>
+                        )}
+                      </div>
                     </div>
                     {userRole !== 'VIEWER' && (
                       <button onClick={() => deleteFinding(f.id)} className="opacity-0 group-hover:opacity-100 p-1 ml-2 rounded hover:bg-destructive/10 text-destructive/60 hover:text-destructive transition-all">
@@ -1555,7 +2117,7 @@ export default function BotDetailPage() {
             {userRole !== 'VIEWER' && (
               <div className="rounded-xl border border-border/50 bg-card/80 p-4">
                 <h3 className="text-sm font-semibold mb-3">Add Remediation Task</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-3">
                 <div className="sm:col-span-2">
                   <label className="text-xs text-muted-foreground mb-1 block">Title</label>
                   <input type="text" value={newRemediation.title} onChange={e => setNewRemediation(p => ({ ...p, title: e.target.value }))}
@@ -1566,6 +2128,16 @@ export default function BotDetailPage() {
                   <label className="text-xs text-muted-foreground mb-1 block">Owner</label>
                   <input type="text" value={newRemediation.owner} onChange={e => setNewRemediation(p => ({ ...p, owner: e.target.value }))}
                     className="w-full px-3 py-2 bg-background border border-border/50 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/50" />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground mb-1 block">Linked Finding</label>
+                  <select value={newRemediation.findingId || ''} onChange={e => setNewRemediation(p => ({ ...p, findingId: e.target.value }))}
+                    className="w-full px-3 py-2 bg-background border border-border/50 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/50">
+                    <option value="">None</option>
+                    {bot?.findings?.map((f: any) => (
+                      <option key={f.id} value={f.id}>{f.observation}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
               <button onClick={addRemediation} disabled={!newRemediation.title.trim()}
@@ -1630,6 +2202,12 @@ export default function BotDetailPage() {
                           )}
                         </div>
                         <p className="text-sm text-foreground mb-2 leading-tight">{t.title}</p>
+                        {t.finding && (
+                          <div className="bg-red-500/5 border border-red-500/10 p-2 rounded mb-2 flex flex-col gap-1">
+                            <span className="text-[10px] font-bold text-red-400">Linked Finding:</span>
+                            <span className="text-xs text-foreground/80 line-clamp-2" title={t.finding.observation}>{t.finding.observation}</span>
+                          </div>
+                        )}
                         {t.owner && (
                           <div className="flex items-center gap-1 mt-2 pt-2 border-t border-border/30">
                             <div className="h-5 w-5 rounded-full bg-primary/20 flex items-center justify-center text-[9px] text-primary font-bold">
@@ -1707,10 +2285,10 @@ export default function BotDetailPage() {
                   <p className="text-sm text-muted-foreground">No audit logs found.</p>
                 </div>
               ) : (
-                auditLogs.map((log: any, i: number) => (
+                auditLogs.slice((auditLogPage - 1) * 10, auditLogPage * 10).map((log: any, i: number, arr: any[]) => (
                   <div key={log.id} className="relative flex gap-4 pb-4 last:pb-0">
                     {/* Timeline line */}
-                    {i < auditLogs.length - 1 && (
+                    {i < arr.length - 1 && (
                       <div className="absolute left-[11px] top-6 bottom-0 w-px bg-border/50" />
                     )}
                     {/* Timeline dot */}
@@ -1740,6 +2318,17 @@ export default function BotDetailPage() {
                 ))
               )}
             </div>
+            {auditLogs.length > 10 && (
+              <div className="pt-4 mt-4 border-t border-border/30 flex items-center justify-between">
+                <span className="text-xs text-muted-foreground">
+                  Showing {(auditLogPage - 1) * 10 + 1} to {Math.min(auditLogPage * 10, auditLogs.length)} of {auditLogs.length} events
+                </span>
+                <div className="flex gap-2">
+                  <button onClick={() => setAuditLogPage(p => Math.max(1, p - 1))} disabled={auditLogPage === 1} className="px-3 py-1 bg-background border border-border/50 rounded hover:bg-muted disabled:opacity-50 text-xs">Previous</button>
+                  <button onClick={() => setAuditLogPage(p => p + 1)} disabled={auditLogPage * 10 >= auditLogs.length} className="px-3 py-1 bg-background border border-border/50 rounded hover:bg-muted disabled:opacity-50 text-xs">Next</button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

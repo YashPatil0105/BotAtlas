@@ -28,6 +28,16 @@ const ACTION_TYPE_CATEGORY_MAP: Record<ActionType, string> = {
 
 export async function GET(request: NextRequest) {
   try {
+    const searchParams = request.nextUrl.searchParams;
+    const processFilter = searchParams.get("process");
+    const departmentFilter = searchParams.get("department");
+    const siteFilter = searchParams.get("site");
+
+    const botWhere: any = {};
+    if (processFilter && processFilter !== "ALL") botWhere.process = processFilter;
+    if (departmentFilter && departmentFilter !== "ALL") botWhere.department = departmentFilter;
+    if (siteFilter && siteFilter !== "ALL") botWhere.site = siteFilter;
+
     // 1. Group steps by exactHash or canonicalSignature to find repeats
     const repeatedSteps = await prisma.botStep.groupBy({
       by: ["exactHash", "canonicalSignature"],
@@ -36,6 +46,7 @@ export async function GET(request: NextRequest) {
           { exactHash: { not: null } },
           { exactHash: { not: "" } },
         ],
+        ...(Object.keys(botWhere).length > 0 ? { bot: botWhere } : {}),
       },
       _count: {
         _all: true,
@@ -58,7 +69,10 @@ export async function GET(request: NextRequest) {
 
       // Find the detailed steps in this group
       const steps = await prisma.botStep.findMany({
-        where: { exactHash: hash },
+        where: { 
+          exactHash: hash,
+          ...(Object.keys(botWhere).length > 0 ? { bot: botWhere } : {}),
+        },
         include: {
           bot: {
             select: {

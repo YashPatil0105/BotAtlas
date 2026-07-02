@@ -111,6 +111,11 @@ export async function GET(request: NextRequest) {
               dependencies: true,
             },
           },
+          deployments: {
+            include: {
+              server: true
+            }
+          }
         },
         orderBy,
         skip,

@@ -91,6 +91,12 @@ async function main() {
   await prisma.dependency.deleteMany();
   await prisma.botStep.deleteMany();
   await prisma.botSimilarity.deleteMany();
+  await prisma.executionActivityLog.deleteMany();
+  await prisma.executionQueue.deleteMany();
+  await prisma.deploymentRequest.deleteMany();
+  await prisma.botDeployment.deleteMany();
+  await prisma.pamSession.deleteMany();
+  await prisma.pamServer.deleteMany();
   await prisma.bot.deleteMany();
   await prisma.user.deleteMany();
 
@@ -847,6 +853,173 @@ async function main() {
       { userId: reviewerUser.id, botId: bot5.id },
       { userId: reviewerUser.id, botId: bot7.id },
       { userId: reviewerUser.id, botId: bot10.id },
+    ],
+  });
+
+  // ─── PAM SERVERS & SESSIONS ─────────────────────────
+  console.log('\n🖥️ Seeding PAM Servers and Sessions...');
+  const serversData = [
+    { name: 'Server 1', ipAddress: '192.168.10.11', maxBotCapacity: 10 },
+    { name: 'Server 2', ipAddress: '192.168.10.12', maxBotCapacity: 10 },
+    { name: 'Server 3', ipAddress: '192.168.10.13', maxBotCapacity: 8 },
+    { name: 'Server 4', ipAddress: '192.168.10.14', maxBotCapacity: 8 },
+    { name: 'Server 5', ipAddress: '192.168.10.15', maxBotCapacity: 6 },
+    { name: 'Server 6', ipAddress: '192.168.10.16', maxBotCapacity: 6 },
+  ];
+
+  const servers = [];
+  for (const s of serversData) {
+    const server = await prisma.pamServer.create({
+      data: s,
+    });
+    servers.push(server);
+
+    await prisma.pamSession.create({
+      data: {
+        serverId: server.id,
+        sessionName: 'Session 1',
+        pamUserId: `PAM_USR_${server.name.replace('Server ', '')}A`,
+        status: 'FREE',
+      },
+    });
+    await prisma.pamSession.create({
+      data: {
+        serverId: server.id,
+        sessionName: 'Session 2',
+        pamUserId: `PAM_USR_${server.name.replace('Server ', '')}B`,
+        status: 'FREE',
+      },
+    });
+  }
+
+  // ─── BOT DEPLOYMENTS ───────────────────────────────
+  console.log('📦 Seeding Bot Deployments...');
+  await prisma.botDeployment.createMany({
+    data: [
+      { botId: bot1.id, serverId: servers[0].id, sessionName: 'Session 1' },
+      { botId: bot1.id, serverId: servers[1].id, sessionName: 'Session 1' },
+      { botId: bot1.id, serverId: servers[2].id, sessionName: 'Session 1' },
+
+      { botId: bot3.id, serverId: servers[0].id, sessionName: 'Session 2' },
+      { botId: bot3.id, serverId: servers[1].id, sessionName: 'Session 2' },
+
+      { botId: bot5.id, serverId: servers[3].id, sessionName: 'Session 1' },
+
+      { botId: bot7.id, serverId: servers[4].id, sessionName: 'Session 1' },
+      { botId: bot7.id, serverId: servers[5].id, sessionName: 'Session 1' },
+
+      { botId: bot10.id, serverId: servers[5].id, sessionName: 'Session 2' },
+    ],
+  });
+
+  // Make Server 1 Session 1 and Server 2 Session 1 busy with Bot 1
+  const session1A = await prisma.pamSession.findFirst({
+    where: { serverId: servers[0].id, sessionName: 'Session 1' }
+  });
+  if (session1A) {
+    await prisma.pamSession.update({
+      where: { id: session1A.id },
+      data: { status: 'BUSY', currentBotId: bot1.id }
+    });
+  }
+
+  const session2A = await prisma.pamSession.findFirst({
+    where: { serverId: servers[1].id, sessionName: 'Session 1' }
+  });
+  if (session2A) {
+    await prisma.pamSession.update({
+      where: { id: session2A.id },
+      data: { status: 'BUSY', currentBotId: bot1.id }
+    });
+  }
+
+  // ─── GOVERNANCE REQUESTS ────────────────────────────
+  console.log('🛡️ Seeding Governance Deployment Requests...');
+  await prisma.deploymentRequest.createMany({
+    data: [
+      {
+        botId: bot1.id,
+        targetServerId: servers[0].id,
+        targetSessionName: 'Session 1',
+        developerId: reviewerUser.id,
+        status: 'APPROVED',
+        approverId: adminUser.id,
+        checkedRules: {
+          replicationLimit: { pass: true, detail: '1/3 deployments' },
+          serverCapacity: { pass: true, detail: '1/10 bots' },
+          namingStandard: { pass: true, detail: 'BOT-001 matches' },
+        },
+      },
+      {
+        botId: bot3.id,
+        targetServerId: servers[2].id,
+        targetSessionName: 'Session 1',
+        developerId: reviewerUser.id,
+        status: 'PENDING',
+        failedRuleFlagged: 'REPLICATION_LIMIT',
+        checkedRules: {
+          replicationLimit: { pass: false, detail: 'Failed: Max 2 servers allowed for HIGH criticality bot. Already deployed on 2 servers.' },
+          serverCapacity: { pass: true, detail: '0/8 bots' },
+          namingStandard: { pass: true, detail: 'BOT-003 matches' },
+        },
+        notes: 'Deploying to Server 3 for backup availability.',
+      },
+      {
+        botId: bot5.id,
+        targetServerId: servers[4].id,
+        targetSessionName: 'Session 2',
+        developerId: reviewerUser.id,
+        status: 'PENDING',
+        checkedRules: {
+          replicationLimit: { pass: true, detail: '1/1 deployments' },
+          serverCapacity: { pass: true, detail: '1/6 bots' },
+          namingStandard: { pass: true, detail: 'BOT-005 matches' },
+        },
+        notes: 'Requested UAT server deployment.',
+      }
+    ],
+  });
+
+  // ─── EXECUTION ACTIVITY LOGS ─────────────────────────
+  console.log('📝 Seeding Execution Activity Logs...');
+  await prisma.executionActivityLog.createMany({
+    data: [
+      {
+        botId: bot1.id,
+        userId: reviewerUser.id,
+        serverId: servers[0].id,
+        sessionName: 'Session 1',
+        action: 'CHECKOUT',
+        timestamp: new Date(Date.now() - 3600000),
+        details: 'Checked out Server 1 Session 1 for scheduled run.',
+      },
+      {
+        botId: bot3.id,
+        userId: reviewerUser.id,
+        serverId: servers[1].id,
+        sessionName: 'Session 2',
+        action: 'SUGGEST_REQUESTED',
+        timestamp: new Date(Date.now() - 1800000),
+        details: 'Suggested Server 2 Session 2.',
+      },
+      {
+        botId: bot3.id,
+        userId: reviewerUser.id,
+        serverId: servers[1].id,
+        sessionName: 'Session 2',
+        action: 'CHECKOUT',
+        timestamp: new Date(Date.now() - 1750000),
+        details: 'Checked out Server 2 Session 2.',
+      },
+      {
+        botId: bot3.id,
+        userId: reviewerUser.id,
+        serverId: servers[1].id,
+        sessionName: 'Session 2',
+        action: 'CHECKIN',
+        timestamp: new Date(Date.now() - 600000),
+        details: 'Checked in Server 2 Session 2. Execution complete.',
+      },
     ],
   });
 

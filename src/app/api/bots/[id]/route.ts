@@ -48,9 +48,13 @@ export async function GET(
           orderBy: { stepOrder: "asc" },
         },
         dependencies: true,
-        findings: true,
+        findings: {
+          include: { remediationTasks: true }
+        },
         rootCauseAssessments: true,
-        remediationTasks: true,
+        remediationTasks: {
+          include: { finding: true }
+        },
         evidences: true,
         checklist: true,
       },
@@ -84,6 +88,7 @@ export async function PUT(
 
     const parsed = botCreateSchema.partial().safeParse(body);
     if (!parsed.success) {
+      console.error("Validation failed in PUT /api/bots/[id]:", parsed.error.flatten());
       return NextResponse.json(
         { error: "Validation failed", details: parsed.error.flatten() },
         { status: 400 }
@@ -93,6 +98,32 @@ export async function PUT(
     const existing = await prisma.bot.findUnique({ where: { id } });
     if (!existing) {
       return NextResponse.json({ error: "Bot not found" }, { status: 404 });
+    }
+
+    const isDecommissioned = parsed.data.currentStatus === "RETIRED" || parsed.data.currentStatus === "OBSOLETE";
+
+    if (isDecommissioned) {
+      // Run deletions in a transaction with the update
+      const [bot] = await prisma.$transaction([
+        prisma.bot.update({
+          where: { id },
+          data: parsed.data,
+          include: {
+            steps: { orderBy: { stepOrder: "asc" } },
+            dependencies: true,
+            findings: true,
+            rootCauseAssessments: true,
+            remediationTasks: true,
+            evidences: true,
+            checklist: true,
+          },
+        }),
+        prisma.botAssignment.deleteMany({ where: { botId: id } }),
+        prisma.botDeployment.deleteMany({ where: { botId: id } }),
+        prisma.executionQueue.deleteMany({ where: { botId: id } }),
+        prisma.deploymentRequest.deleteMany({ where: { botId: id } }),
+      ]);
+      return NextResponse.json(bot);
     }
 
     const bot = await prisma.bot.update({
@@ -111,9 +142,9 @@ export async function PUT(
 
     return NextResponse.json(bot);
   } catch (error) {
-    console.error("PUT /api/bots/[id] error:", error);
+    console.error("PUT /api/bots/[id] 500 error:", error);
     return NextResponse.json(
-      { error: "Failed to update bot" },
+      { error: "Failed to update bot", details: String(error) },
       { status: 500 }
     );
   }

@@ -16,6 +16,8 @@ import {
   Zap,
   Settings,
   Users,
+  Server,
+  ShieldCheck,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -29,6 +31,16 @@ const NAV_ITEMS = [
     label: 'Bot Registry',
     href: '/dashboard/bots',
     icon: Bot,
+  },
+  {
+    label: 'Server Overview',
+    href: '/dashboard/servers',
+    icon: Server,
+  },
+  {
+    label: 'Governance Center',
+    href: '/dashboard/governance',
+    icon: ShieldCheck,
   },
   {
     label: 'Access Management',

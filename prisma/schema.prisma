@@ -199,7 +199,13 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  botAssignments BotAssignment[]
+  botAssignments    BotAssignment[]
+  developerRequests DeploymentRequest[]    @relation("DeveloperRequests")
+  approverRequests  DeploymentRequest[]    @relation("ApproverRequests")
+  queueEntries      ExecutionQueue[]
+  executionLogs     ExecutionActivityLog[]
+  accessRequests    AccessRequest[]
+  notifications     Notification[]
 
   @@map("users")
 }
@@ -248,6 +254,8 @@ model Bot {
   server              String?
   botExecutionUserId  String?
   docsLinks           String?
+  docsUploaded        Boolean              @default(false)
+  site                String?
 
   steps                BotStep[]
   dependencies         Dependency[]
@@ -256,10 +264,15 @@ model Bot {
   remediationTasks     RemediationTask[]
   evidences            Evidence[]
   checklist            BotChecklist[]
-  sourceSimilarities   BotSimilarity[]       @relation("SourceBot")
-  targetSimilarities   BotSimilarity[]       @relation("TargetBot")
+  sourceSimilarities   BotSimilarity[]        @relation("SourceBot")
+  targetSimilarities   BotSimilarity[]        @relation("TargetBot")
   sourceComponents     Component[]
   botAssignments       BotAssignment[]
+  deployments          BotDeployment[]
+  deploymentRequests   DeploymentRequest[]
+  queueEntries         ExecutionQueue[]
+  executionLogs        ExecutionActivityLog[]
+  accessRequests       AccessRequest[]
 
   @@index([botCode])
   @@index([currentStatus])
@@ -537,4 +550,169 @@ model BotAssignment {
   @@index([userId])
   @@index([botId])
   @@map("bot_assignments")
+}
+
+enum SessionStatus {
+  FREE
+  BUSY
+  OFFLINE
+}
+
+enum DeploymentRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum QueueStatus {
+  QUEUED
+  ASSIGNED
+  COMPLETED
+  CANCELLED
+}
+
+enum ExecutionLogAction {
+  SUGGEST_REQUESTED
+  CHECKOUT
+  CHECKIN
+  QUEUE_ENTER
+  QUEUE_LEAVE_TIMEOUT
+  ACCESS_DENIED
+}
+
+model PamServer {
+  id             String              @id @default(cuid())
+  name           String              @unique
+  ipAddress      String?
+  maxBotCapacity Int                 @default(10)
+  isActive       Boolean             @default(true)
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  sessions       PamSession[]
+  deployments    BotDeployment[]
+  requests       DeploymentRequest[]
+
+  @@map("pam_servers")
+}
+
+model PamSession {
+  id             String           @id @default(cuid())
+  serverId       String
+  sessionName    String
+  pamUserId      String
+  status         SessionStatus    @default(FREE)
+  currentBotId   String?
+  currentUserId  String?
+  lastCheckInAt  DateTime         @default(now())
+  lastReleasedAt DateTime?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  server         PamServer        @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  queueEntries   ExecutionQueue[]
+
+  @@unique([serverId, sessionName])
+  @@map("pam_sessions")
+}
+
+model BotDeployment {
+  id          String    @id @default(cuid())
+  botId       String
+  serverId    String
+  sessionName String
+  deployedAt  DateTime  @default(now())
+  bot         Bot       @relation(fields: [botId], references: [id], onDelete: Cascade)
+  server      PamServer @relation(fields: [serverId], references: [id], onDelete: Cascade)
+
+  @@unique([botId, serverId, sessionName])
+  @@map("bot_deployments")
+}
+
+model DeploymentRequest {
+  id                String                  @id @default(cuid())
+  botId             String
+  targetServerId    String
+  targetSessionName String
+  developerId       String
+  status            DeploymentRequestStatus @default(PENDING)
+  approverId        String?
+  checkedRules      Json
+  failedRuleFlagged String?
+  notes             String?
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
+  bot               Bot                     @relation(fields: [botId], references: [id], onDelete: Cascade)
+  server            PamServer               @relation(fields: [targetServerId], references: [id], onDelete: Cascade)
+  developer         User                    @relation("DeveloperRequests", fields: [developerId], references: [id], onDelete: Cascade)
+  approver          User?                   @relation("ApproverRequests", fields: [approverId], references: [id], onDelete: Cascade)
+
+  @@map("deployment_requests")
+}
+
+model ExecutionQueue {
+  id                String      @id @default(cuid())
+  botId             String
+  userId            String
+  status            QueueStatus @default(QUEUED)
+  assignedServerId  String?
+  assignedSessionId String?
+  queuePosition     Int
+  requestedAt       DateTime    @default(now())
+  assignedAt        DateTime?
+  expiresAt         DateTime?
+  bot               Bot         @relation(fields: [botId], references: [id], onDelete: Cascade)
+  user              User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session           PamSession? @relation(fields: [assignedSessionId], references: [id], onDelete: SetNull)
+
+  @@map("execution_queues")
+}
+
+model ExecutionActivityLog {
+  id          String             @id @default(cuid())
+  botId       String
+  userId      String
+  serverId    String?
+  sessionName String?
+  action      ExecutionLogAction
+  timestamp   DateTime           @default(now())
+  details     String?
+  bot         Bot                @relation(fields: [botId], references: [id], onDelete: Cascade)
+  user        User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("execution_activity_logs")
+}
+
+enum AccessRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model AccessRequest {
+  id        String              @id @default(cuid())
+  botId     String
+  userId    String
+  status    AccessRequestStatus @default(PENDING)
+  notes     String?
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
+
+  bot  Bot  @relation(fields: [botId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("access_requests")
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String
+  message   String
+  isRead    Boolean  @default(false)
+  link      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notifications")
 }

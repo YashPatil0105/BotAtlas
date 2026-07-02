@@ -36,6 +36,7 @@ interface BotRecord {
   businessOwner: string | null;
   updatedAt: string;
   _count: { steps: number; findings: number; dependencies: number };
+  deployments?: { server: { name: string }, sessionName: string }[];
 }
 
 const STATUS_STYLES: Record<string, string> = {
@@ -812,6 +813,7 @@ export default function BotRegistryPage() {
                 {renderSortableHeader('Department', 'department')}
                 {renderSortableHeader('Steps', 'steps')}
                 {renderSortableHeader('Findings', 'findings')}
+                <th className="px-4 py-3 font-semibold text-left text-muted-foreground whitespace-nowrap">Locations</th>
                 <th className="px-4 py-3"></th>
               </tr>
             </thead>
@@ -889,6 +891,19 @@ export default function BotRegistryPage() {
                   <td className="px-4 py-3 text-sm text-muted-foreground">{bot.department || '—'}</td>
                   <td className="px-4 py-3 text-sm text-muted-foreground text-center">{bot._count.steps}</td>
                   <td className="px-4 py-3 text-sm text-muted-foreground text-center">{bot._count.findings}</td>
+                  <td className="px-4 py-3">
+                    {bot.deployments && bot.deployments.length > 0 ? (
+                      <div className="flex flex-col gap-1">
+                        {bot.deployments.map((dep, idx) => (
+                          <span key={idx} className="inline-flex items-center text-[10px] bg-secondary/50 text-secondary-foreground px-2 py-0.5 rounded truncate max-w-[120px]" title={`${dep.server.name} > ${dep.sessionName}`}>
+                            {dep.server.name} ({dep.sessionName})
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-[10px] text-muted-foreground/50 italic">Unmapped</span>
+                    )}
+                  </td>
                   <td className="px-4 py-3">
                     <Link href={`/dashboard/bots/${bot.id}`}
                       className="opacity-0 group-hover:opacity-100 p-1.5 rounded-md hover:bg-white/10 transition-all" title="Review">

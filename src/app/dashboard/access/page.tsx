@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo, useRef, useEffect } from 'react';
-import { Search, Download, Filter, UserCheck, Shield, Laptop, Building2, Upload, FileSpreadsheet, Plus, MoreHorizontal, UserPlus, Trash2, Edit2 } from 'lucide-react';
+import { Search, Download, Filter, UserCheck, Shield, Laptop, Building2, Upload, FileSpreadsheet, Plus, MoreHorizontal, UserPlus, Trash2, Edit2, Check, X, Clock, AlertTriangle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import * as XLSX from 'xlsx';
 import { useSession } from 'next-auth/react';
@@ -48,6 +48,47 @@ export default function AccessManagementPage() {
   const isAdmin = session?.user && (session.user as any).role === 'ADMIN';
 
   const [data, setData] = useState(INITIAL_DATA);
+  const [accessRequests, setAccessRequests] = useState<any[]>([]);
+  const [selectedRequests, setSelectedRequests] = useState<string[]>([]);
+  const [resolvingId, setResolvingId] = useState<string | null>(null);
+  const [resolutionNotes, setResolutionNotes] = useState('');
+  const [resolvingAction, setResolvingAction] = useState<'APPROVE' | 'REJECT' | null>(null);
+
+  const fetchRequests = async () => {
+    if (!isAdmin) return;
+    try {
+      const res = await fetch('/api/access/requests');
+      if (res.ok) setAccessRequests(await res.json());
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  useEffect(() => {
+    fetchRequests();
+  }, [isAdmin]);
+
+  const handleResolve = (id: string, action: 'APPROVE' | 'REJECT') => {
+    setResolvingId(id);
+    setResolvingAction(action);
+    setResolutionNotes('');
+  };
+
+  const submitResolve = async (id: string) => {
+    try {
+      const res = await fetch(`/api/access/requests/${id}/resolve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: resolvingAction, notes: resolutionNotes })
+      });
+      if (res.ok) {
+        setResolvingId(null);
+        fetchRequests();
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
   
   // Determine user's company if they are not admin
   const userCompany = useMemo(() => {
@@ -297,6 +338,133 @@ export default function AccessManagementPage() {
           </div>
         ))}
       </div>
+
+      {/* Access Requests Inbox for Admins */}
+      {isAdmin && accessRequests.length > 0 && (
+          <div className="bg-card border border-border/50 rounded-xl overflow-hidden shadow-sm">
+            <div className="p-4 border-b border-border/50 bg-muted/20 flex justify-between items-center">
+              <h2 className="text-lg font-semibold flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5 text-amber-500" />
+               Pending Run Access Requests
+                <span className="bg-amber-500/10 text-amber-500 text-xs px-2 py-0.5 rounded-full border border-amber-500/20 font-bold">
+                  {accessRequests.filter(r => r.status === 'PENDING').length}
+                </span>
+              </h2>
+              {accessRequests.some(r => r.status === 'PENDING') && (
+                <div className="flex items-center gap-3">
+                  <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer hover:text-foreground transition-colors">
+                    <input
+                      type="checkbox"
+                      checked={selectedRequests.length > 0 && selectedRequests.length === accessRequests.filter(r => r.status === 'PENDING').length}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedRequests(accessRequests.filter(r => r.status === 'PENDING').map(r => r.id));
+                        } else {
+                          setSelectedRequests([]);
+                        }
+                      }}
+                    />
+                    Select All
+                  </label>
+                <button
+                  disabled={selectedRequests.length === 0}
+                  onClick={async () => {
+                    const reqsToApprove = accessRequests.filter(r => r.status === 'PENDING' && selectedRequests.includes(r.id));
+                    if (reqsToApprove.length === 0) return;
+                    if (window.confirm(`Are you sure you want to approve ${reqsToApprove.length} selected requests?`)) {
+                      try {
+                        for (const req of reqsToApprove) {
+                          await fetch(`/api/access/requests/${req.id}/resolve`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ action: 'APPROVE', notes: 'Bulk approved by admin.' })
+                          });
+                        }
+                        setSelectedRequests([]);
+                        fetchRequests();
+                      } catch (e) {
+                        console.error("Error during bulk approval.", e);
+                      }
+                    }
+                  }}
+                  className="px-3 py-1.5 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed border border-emerald-500/20 rounded-md text-xs font-semibold transition-all"
+                >
+                  Bulk Approve Selected
+                </button>
+                </div>
+              )}
+            </div>
+            <div className="divide-y divide-border/50">
+              {accessRequests.filter(r => r.status === 'PENDING').map(req => (
+                <div key={req.id} className="p-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 hover:bg-white/[0.02] transition-colors">
+                  <div className="flex items-start gap-3">
+                    <input 
+                      type="checkbox" 
+                      checked={selectedRequests.includes(req.id)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedRequests(prev => [...prev, req.id]);
+                        } else {
+                          setSelectedRequests(prev => prev.filter(id => id !== req.id));
+                        }
+                      }}
+                      className="mt-1"
+                    />
+                    <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-foreground">{req.user.name}</span>
+                    <span className="text-xs text-muted-foreground">({req.user.email})</span>
+                  </div>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="text-xs text-muted-foreground">requested access to run</span>
+                    <span className="text-xs font-mono text-primary font-bold bg-primary/10 px-1.5 py-0.5 rounded">{req.bot.botCode}</span>
+                    <span className="text-sm font-semibold text-foreground">{req.bot.name}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 mt-2 text-xs text-muted-foreground">
+                    <Clock className="w-3.5 h-3.5" /> {new Date(req.createdAt).toLocaleString()}
+                  </div>
+                </div>
+                </div>
+
+                <div className="w-full md:w-auto">
+                  {resolvingId === req.id ? (
+                    <div className="flex flex-col gap-2 p-3 bg-muted/30 border border-border/50 rounded-lg shadow-sm w-full md:w-80">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                        {resolvingAction === 'APPROVE' ? 'Approval Notes' : 'Rejection Reason'}
+                      </label>
+                      <textarea
+                        value={resolutionNotes}
+                        onChange={e => setResolutionNotes(e.target.value)}
+                        placeholder="Optional remarks..."
+                        className="w-full text-xs bg-background border border-border rounded p-2 focus:outline-none focus:border-primary resize-none"
+                        rows={2}
+                      />
+                      <div className="flex gap-2 justify-end">
+                        <button onClick={() => setResolvingId(null)} className="px-3 py-1 text-xs hover:bg-white/5 rounded">Cancel</button>
+                        <button onClick={() => submitResolve(req.id)} className={`px-3 py-1 text-xs font-bold rounded text-white shadow-sm ${resolvingAction === 'APPROVE' ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-red-500 hover:bg-red-600'}`}>
+                          Confirm {resolvingAction}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex gap-2">
+                      <button onClick={() => handleResolve(req.id, 'REJECT')} className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg border border-red-500/20 text-red-400 hover:bg-red-500/10 transition-colors font-medium">
+                        <X className="w-3.5 h-3.5" /> Reject
+                      </button>
+                      <button onClick={() => handleResolve(req.id, 'APPROVE')} className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg border border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/10 transition-colors font-medium">
+                        <Check className="w-3.5 h-3.5" /> Approve
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+            {accessRequests.filter(r => r.status === 'PENDING').length === 0 && (
+              <div className="p-8 text-center text-muted-foreground text-sm">No pending run access requests.</div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="border-b border-border/60">

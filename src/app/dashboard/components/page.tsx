@@ -84,6 +84,9 @@ export default function ComponentCatalogPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [processFilter, setProcessFilter] = useState('');
+  const [departmentFilter, setDepartmentFilter] = useState('');
+  const [siteFilter, setSiteFilter] = useState('');
   const [showNewComponent, setShowNewComponent] = useState(false);
   const [saving, setSaving] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -110,6 +113,9 @@ export default function ComponentCatalogPage() {
     const params = new URLSearchParams();
     if (search) params.set('search', search);
     if (statusFilter) params.set('status', statusFilter);
+    if (processFilter) params.set('process', processFilter);
+    if (departmentFilter) params.set('department', departmentFilter);
+    if (siteFilter) params.set('site', siteFilter);
 
     fetch(`/api/components?${params}`)
       .then(r => r.json())
@@ -118,18 +124,23 @@ export default function ComponentCatalogPage() {
         setLoading(false);
       })
       .catch(() => setLoading(false));
-  }, [search, statusFilter]);
+  }, [search, statusFilter, processFilter, departmentFilter, siteFilter]);
 
   const fetchCandidates = useCallback(() => {
     setCandidatesLoading(true);
-    fetch('/api/components/discover')
+    const params = new URLSearchParams();
+    if (processFilter) params.set('process', processFilter);
+    if (departmentFilter) params.set('department', departmentFilter);
+    if (siteFilter) params.set('site', siteFilter);
+
+    fetch(`/api/components/discover?${params}`)
       .then(r => r.json())
       .then(data => {
         setCandidates(data.candidates || []);
         setCandidatesLoading(false);
       })
       .catch(() => setCandidatesLoading(false));
-  }, []);
+  }, [processFilter, departmentFilter, siteFilter]);
 
   const approveCandidate = async (candidate: any) => {
     try {
@@ -322,31 +333,41 @@ export default function ComponentCatalogPage() {
       {activeMainTab === 'catalog' ? (
         <>
           {/* Toolbar */}
-          <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
-        <div className="flex items-center gap-3 flex-1 w-full sm:w-auto">
-          <div className="relative flex-1 max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <input
-              type="text" placeholder="Search components..."
-              value={search} onChange={e => setSearch(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 bg-card/80 border border-border/50 rounded-lg text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/50 transition-all"
-            />
+          <div className="flex flex-col gap-3 w-full">
+            <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
+              <div className="flex items-center gap-3 flex-1 w-full sm:w-auto">
+                <div className="relative flex-1 max-w-md">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <input
+                    type="text" placeholder="Search components..."
+                    value={search} onChange={e => setSearch(e.target.value)}
+                    className="w-full pl-9 pr-4 py-2 bg-card/80 border border-border/50 rounded-lg text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/50 transition-all"
+                  />
+                </div>
+                <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
+                  className="px-3 py-2 bg-card/80 border border-border/50 rounded-lg text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50">
+                  <option value="">All Statuses</option>
+                  {Object.entries(STATUS_CONFIG).map(([key, cfg]) => (
+                    <option key={key} value={key}>{cfg.label}</option>
+                  ))}
+                </select>
+              </div>
+              {userRole !== 'VIEWER' && (
+                <button onClick={() => setShowNewComponent(true)}
+                  className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 transition-all shadow-lg shadow-primary/20">
+                  <Plus className="h-4 w-4" /> New Component
+                </button>
+              )}
+            </div>
+            <div className="flex items-center gap-3 flex-wrap">
+              <input type="text" placeholder="Filter by Process..." value={processFilter} onChange={e => setProcessFilter(e.target.value)}
+                className="w-48 px-3 py-1.5 bg-card/80 border border-border/50 rounded-lg text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50" />
+              <input type="text" placeholder="Filter by Department..." value={departmentFilter} onChange={e => setDepartmentFilter(e.target.value)}
+                className="w-48 px-3 py-1.5 bg-card/80 border border-border/50 rounded-lg text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50" />
+              <input type="text" placeholder="Filter by Site..." value={siteFilter} onChange={e => setSiteFilter(e.target.value)}
+                className="w-48 px-3 py-1.5 bg-card/80 border border-border/50 rounded-lg text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50" />
+            </div>
           </div>
-          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
-            className="px-3 py-2 bg-card/80 border border-border/50 rounded-lg text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50">
-            <option value="">All Statuses</option>
-            {Object.entries(STATUS_CONFIG).map(([key, cfg]) => (
-              <option key={key} value={key}>{cfg.label}</option>
-            ))}
-          </select>
-        </div>
-        {userRole !== 'VIEWER' && (
-          <button onClick={() => setShowNewComponent(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 transition-all shadow-lg shadow-primary/20">
-            <Plus className="h-4 w-4" /> New Component
-          </button>
-        )}
-      </div>
 
       {/* New Component Modal */}
       {showNewComponent && (
